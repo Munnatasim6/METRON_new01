@@ -1,0 +1,16 @@
+{
+    "dashboard": {
+        "title": "ড্যাশবোর্ড",
+        "monitor": "মনিটর",
+        "master_config": "মাস্টার কনফিগারেশন",
+        "kill_switch": "কিল সুইচ",
+        "active_positions": "সক্রিয় পজিশন",
+        "api_load": "এপিআই লোড",
+        "net_pnl": "মোট লাভ/ক্ষতি"
+    },
+    "common": {
+        "loading": "লোড হচ্ছে...",
+        "error": "ত্রুটি",
+        "status": "সিস্টেম স্ট্যাটাস"
+    }
+}

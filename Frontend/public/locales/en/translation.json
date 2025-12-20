@@ -1,0 +1,16 @@
+{
+    "dashboard": {
+        "title": "Dashboard",
+        "monitor": "Monitor",
+        "master_config": "Master Config",
+        "kill_switch": "KILL SWITCH",
+        "active_positions": "Active Positions",
+        "api_load": "API Load",
+        "net_pnl": "Net PnL"
+    },
+    "common": {
+        "loading": "Loading...",
+        "error": "Error",
+        "status": "System Status"
+    }
+}

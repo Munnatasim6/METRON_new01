@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: metron_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Backend:/app # Hot-reload code sync
+    env_file:
+      - .env
+    environment:
+      - WATCHFILES_FORCE_POLLING=true # Windows/Docker hot-reload fix
+    restart: always
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.dev # Development Dockerfile
+    container_name: metron_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./Frontend/src:/app/src # Frontend code sync
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:8000
+
+  # Database (TimescaleDB) - Retained from previous config
+  db:
+    image: timescale/timescaledb:latest-pg14
+    container_name: metron_db
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 1.5G
+
+volumes:
+  postgres_data:

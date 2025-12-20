@@ -1,0 +1,5 @@
+{
+  "name": "METRON",
+  "description": "High-Frequency Trading Command Center with real-time monitoring and configuration.",
+  "requestFramePermissions": []
+}
