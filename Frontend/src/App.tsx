@@ -8,6 +8,7 @@ import { Toaster } from 'sonner';
 // Lazy load pages for better performance
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const MonitorPage = lazy(() => import('./pages/MonitorPage'));
+const StrategyPage = lazy(() => import('./pages/StrategyPage'));
 const MasterConfigPage = lazy(() => import('./pages/MasterConfigPage'));
 const ModulePage = lazy(() => import('./pages/ModulePage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
@@ -23,6 +24,7 @@ const App: React.FC = () => {
             <Route index element={<DashboardPage />} />
             <Route path='dashboard' element={<Navigate to='/' replace />} />
             <Route path='monitor' element={<MonitorPage />} />
+            <Route path='strategy' element={<StrategyPage />} />
             <Route path='master_config' element={<MasterConfigPage />} />
             <Route path=':moduleId' element={<ModulePage />} />
             <Route path='*' element={<NotFoundPage />} />

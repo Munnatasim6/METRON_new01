@@ -15,10 +15,14 @@ import AdvancedOpsPanel from '../components/Panels/AdvancedOpsPanel';
 import RustTransformationPanel from '../components/Panels/RustTransformationPanel';
 import HiddenStepsPanel from '../components/Panels/HiddenStepsPanel';
 
+import StrategyPage from './StrategyPage';
+
 const ModulePage: React.FC = () => {
   const { moduleId } = useParams<{ moduleId: string }>();
 
   switch (moduleId) {
+    case 'strategy':
+      return <StrategyPage />;
     case 'datamining':
       return <DataMiningPanel />;
     case 'liquidity':

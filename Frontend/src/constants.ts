@@ -42,6 +42,13 @@ export const APP_MODULES: AppModule[] = [
     color: 'text-neon-blue',
   },
   {
+    id: 'strategy',
+    label: 'Strategy Command',
+    icon: Rocket,
+    desc: 'Mission Control',
+    color: 'text-purple-400',
+  },
+  {
     id: 'datamining',
     label: 'Data Mining',
     icon: Database,
