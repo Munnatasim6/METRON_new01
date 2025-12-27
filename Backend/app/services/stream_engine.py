@@ -11,6 +11,9 @@ from app.database import db
 
 # --- Data Sanitizer Import (New) ---
 from app.services.data_sanitizer import data_sanitizer
+from app.services.timeframe_manager import timeframe_manager
+from app.services.signal_engine import signal_engine
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("StreamEngine")
@@ -103,7 +106,10 @@ class LiveMarketStream:
             if self.last_candle_minute != 0:
                 # নতুন মিনিট শুরু হয়েছে! সিগন্যাল ইঞ্জিন ট্রিগার করার সময়
                 logger.info(f"⏰ New Candle Detected (Minute: {current_minute}). Triggering Analysis...")
-                # এখানে আমরা ভবিষ্যতে 'signal_engine.force_calculate()' কল করতে পারি
+                
+                # --- Feature Engineering Lab Integration ---
+                # Background Task এ পাঠানো হচ্ছে যাতে ব্রডকাস্ট ব্লক না হয়
+                asyncio.create_task(self.run_analysis_pipeline(self.current_pair))
             
             self.last_candle_minute = current_minute
 
@@ -147,5 +153,72 @@ class LiveMarketStream:
         # বর্তমানে শুধু বাইনান্স স্ট্র্যাটেজি আপডেট করা হয়েছে উদাহরণের জন্য
         self.strategy = BinanceWebSocketStrategy(self.broadcast_price)
         asyncio.create_task(self.strategy.start(pair))
+
+    async def run_analysis_pipeline(self, pair: str):
+        """
+        Feature Engineering Lab Pipeline Execution
+        1. Fetch Data -> 2. Transform -> 3. Extract Signals
+        """
+        try:
+            # ১. ডাটা ফেচিং (২০০ ক্যান্ডেল যাতে ইন্ডিকেটর ঠিকমত কাজ করে)
+            candles = await db.fetch_recent_candles(pair, limit=200)
+            if not candles or len(candles) < 50:
+                return
+
+            # ২. ডাটাফ্রেম কনভার্সন
+            df_1m = pd.DataFrame(candles)
+            if 'time' in df_1m.columns:
+                df_1m['datetime'] = pd.to_datetime(df_1m['time'])
+                df_1m.set_index('datetime', inplace=True)
+                df_1m.drop(columns=['time'], inplace=True)
+            
+            # ৩. ট্রান্সফর্মেশন (Timeframe Manager)
+            target_tf = "15T"
+            df_features = timeframe_manager.transform_data(df_1m, target_tf)
+
+            # ৪. সিগন্যাল এক্সট্রাকশন (Phase 3 Logic)
+            signals_lab = None
+            if df_features is not None:
+                signals_lab = signal_engine.extract_signals(df_features, target_tf)
+
+            # ৫. লিগ্যাসি সেন্টিমেন্ট জেনারেশন (Frontend Compatibility)
+            # Candles (Dict List) -> OHLCV (List of Lists) for Signal Engine
+            ohlcv_list = [
+                [c['time'].timestamp() * 1000 if hasattr(c['time'], 'timestamp') else c['time'], 
+                 c['open'], c['high'], c['low'], c['close'], c['volume']] 
+                for c in candles
+            ]
+            sentiment_result = signal_engine.analyze_market_sentiment(ohlcv_list)
+
+            # ৬. মার্জিং: নতুন ল্যাব সিগন্যালগুলো ডিটেইলসে এড করা
+            if signals_lab and signals_lab.get('extracted_signals'):
+                logger.info(f"🔍 ANALYSIS RESULT [{pair}]: {signals_lab['extracted_signals']}")
+                
+                for sig_text in signals_lab['extracted_signals']:
+                    # টেক্সট পার্সিং: "[15T] BUY: Trend..." -> Signal: BUY
+                    sig_type = "NEUTRAL"
+                    if "BUY" in sig_text: sig_type = "BUY"
+                    elif "SELL" in sig_text: sig_type = "SELL"
+                    
+                    sentiment_result['details'].insert(0, {
+                        "name": f"Feature Lab: {sig_text.split(':')[-1].strip()}",
+                        "signal": sig_type
+                    })
+
+            # ৭. ফ্রন্টএন্ডে ব্রডকাস্ট (Legacy Format: SENTIMENT)
+            # এটি Fronted এর SentimentWidget এর সাথে মিল রেখে পাঠানো হচ্ছে
+            payload = {
+                "type": "SENTIMENT",
+                "payload": sentiment_result
+            }
+            
+            for q in list(self.subscribers):
+                try:
+                    q.put_nowait(payload)
+                except asyncio.QueueFull:
+                    pass
+
+        except Exception as e:
+            logger.error(f"Analysis Pipeline Error: {e}")
 
 market_stream = LiveMarketStream()

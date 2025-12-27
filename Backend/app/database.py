@@ -120,6 +120,24 @@ class Database:
         except Exception as e:
             logger.error(f"Candle Insert Error: {e}")
 
+    async def fetch_recent_candles(self, symbol: str, limit: int = 100):
+        """ডাটাবেস থেকে লেটেস্ট ক্যান্ডেল ফেচ করা"""
+        if not self.pool: return []
+        query = """
+            SELECT time, open, high, low, close, volume 
+            FROM candles_1m 
+            WHERE symbol = $1 
+            ORDER BY time DESC 
+            LIMIT $2
+        """
+        try:
+            rows = await self.pool.fetch(query, symbol, limit)
+            # rows are Record objects, convert to list of dicts
+            return [dict(row) for row in sorted(rows, key=lambda x: x['time'])] 
+        except Exception as e:
+            logger.error(f"Fetch Candles Error: {e}")
+            return []
+
     # --- Settings Methods (Replacing SQLite) ---
     async def get_strategy(self):
         if not self.pool: return "conservative"

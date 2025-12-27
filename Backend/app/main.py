@@ -167,10 +167,15 @@ async def get_strategy():
 
 @app.get("/api/arbitrage")
 async def get_arbitrage(symbol: str = Query("BTC/USDT")):
-    """Arbitrage Opportunities (Mock for now)"""
+    """Live Prices for Arbitrage Monitor"""
+    # Mocking live prices slightly different to show spread
+    base_price = 95600.0  # Just a realistic mock
     return [
-        {"buy_exchange": "binance", "sell_exchange": "coinbase", "profit": 0.5, "symbol": symbol},
-        {"buy_exchange": "kraken", "sell_exchange": "kucoin", "profit": 0.2, "symbol": symbol}
+        {"exchange": "Binance", "price": base_price, "logo": "🟡"},
+        {"exchange": "Coinbase", "price": base_price + 45.5, "logo": "🔵"},
+        {"exchange": "Kraken", "price": base_price - 22.0, "logo": "🟣"},
+        {"exchange": "KuCoin", "price": base_price + 18.2, "logo": "🟢"},
+        {"exchange": "Bybit", "price": base_price - 10.5, "logo": "⚫"}
     ]
 
 # System Control

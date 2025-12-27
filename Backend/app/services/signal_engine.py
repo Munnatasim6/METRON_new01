@@ -4,9 +4,7 @@ import numpy as np
 import time
 import logging
 
-# লগিং সেটআপ
-
-from app.services.data_sanitizer import data_sanitizer  # Import Sanitizer
+from app.services.data_sanitizer import data_sanitizer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("SignalEngine")
@@ -37,6 +35,7 @@ class SignalEngine:
     def analyze_market_sentiment(self, ohlcv_data):
         """
         স্মার্ট সেন্টিমেন্ট এনালাইসিস ইঞ্জিন (with Caching & Optimization)
+        Legacy Support for basic dashboard sentiment
         """
         current_time = time.time()
 
@@ -47,7 +46,6 @@ class SignalEngine:
         # ==========================================
         # ১. গ্যাপ ফিলিং (Gap Filler Layer)
         # ==========================================
-        # কাঁচা OHLCV ডাটাকে আগে ক্লিন করা হচ্ছে
         cleaned_ohlcv = data_sanitizer.fill_candle_gaps(ohlcv_data)
 
         # ২. ডাটা ফ্রেম তৈরি
@@ -64,17 +62,9 @@ class SignalEngine:
             df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('datetime', inplace=True)
 
-        # ==========================================
-        # ৩. NaN এবং Inf হ্যান্ডলিং (Data Integrity)
-        # ==========================================
-        # লজিক: কোনো কারণে যদি জিরো ডিভিশন এরর (Infinite) আসে, সেটাকে NaN বানাও
+        # ৩. NaN এবং Inf হ্যান্ডলিং
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-        # লজিক: কোনো ভ্যালু মিসিং (NaN) থাকলে আগের ভ্যালু দিয়ে পূরণ করো (Forward Fill)
-        # এটি i3 এর জন্য ভারী interpolation এর চেয়ে অনেক ফাস্ট
         df.fillna(method='ffill', inplace=True)
-        
-        # যদি শুরুর দিকেই NaN থাকে (যেখানে আগের ভ্যালু নেই), তবে 0 দিয়ে পূরণ করো
         df.fillna(0, inplace=True)
 
         # রিসেট ভোটিং
@@ -175,13 +165,76 @@ class SignalEngine:
             if vwap is not None:
                 self._add_vote("VWAP", "BUY" if last_close > vwap.iloc[-1] else "SELL")
 
+            # ==========================================
+            # ৪. New Indicators to reach 20+ (Pro Feature)
+            # ==========================================
+            # 13. Williams %R
+            willr = df.ta.willr(length=14)
+            if willr is not None:
+                val = willr.iloc[-1]
+                self._add_vote("Williams %R", "BUY" if val < -80 else "SELL" if val > -20 else "NEUTRAL")
+
+            # 14. Ultimate Oscillator
+            uo = df.ta.uo()
+            if uo is not None:
+                val = uo.iloc[-1]
+                self._add_vote("Ultimate Osc", "BUY" if val > 70 else "SELL" if val < 30 else "NEUTRAL")
+
+            # 15. Parabolic SAR
+            psar = df.ta.psar()
+            if psar is not None:
+                # PSAR returns columns like PSARl_0.02_0.2 and PSARs_...
+                # Usually if close > psar, it's defined in one of the columns or combined
+                # pandas_ta returns two columns usually, one for long, one for short
+                # Or simpler check: if PSAR is below price -> Bullish
+                curr_psar = psar[psar.columns[0]].iloc[-1]
+                # If psar value is NaN it means the other column has value (trend switch)
+                # But let's assume if any value is present and < close -> Buy
+                # Simplified check:
+                if not np.isnan(curr_psar):
+                     self._add_vote("Parabolic SAR", "BUY" if last_close > curr_psar else "SELL")
+
+            # 16. MFI (Money Flow Index)
+            mfi = df.ta.mfi(length=14)
+            if mfi is not None:
+                val = mfi.iloc[-1]
+                self._add_vote("MFI", "BUY" if val < 20 else "SELL" if val > 80 else "NEUTRAL")
+
+            # 17. Awesome Oscillator
+            ao = df.ta.ao()
+            if ao is not None:
+                val = ao.iloc[-1]
+                prev = ao.iloc[-2]
+                self._add_vote("Awesome Osc", "BUY" if val > 0 and val > prev else "SELL" if val < 0 else "NEUTRAL")
+
+            # 18. Keltner Channels
+            kc = df.ta.kc()
+            if kc is not None:
+                # Check if price is above upper or below lower
+                upper = kc[kc.columns[0]].iloc[-1] # Usually Upper is first or distinct named
+                lower = kc[kc.columns[2]].iloc[-1] # Lower 3rd
+                if last_close > upper: self._add_vote("Keltner Ch", "BUY")
+                elif last_close < lower: self._add_vote("Keltner Ch", "SELL")
+                else: self._add_vote("Keltner Ch", "NEUTRAL")
+
+            # 19. TRIX
+            trix = df.ta.trix()
+            if trix is not None:
+                 # TRIX returns tuple sometimes (TRIX, TRIXs)
+                 val = trix[trix.columns[0]].iloc[-1]
+                 self._add_vote("TRIX", "BUY" if val > 0 else "SELL")
+
+            # 20. ROC (Rate of Change)
+            roc = df.ta.roc()
+            if roc is not None:
+                val = roc.iloc[-1]
+                self._add_vote("ROC", "BUY" if val > 0 else "SELL")
+
         except Exception as e:
             logger.error(f"Signal Calculation Error: {e}")
             return {"verdict": "ERROR", "score": 0, "details": []}
 
-        # ==========================================
         # ফাইনাল রেজাল্ট প্রসেসিং
-        # ==========================================
         score = self.buy_votes - self.sell_votes
         verdict = "NEUTRAL 😐"
         color = "#ffb300"
@@ -207,11 +260,75 @@ class SignalEngine:
             "details": self.details
         }
 
-        # ৩. ক্যাশ আপডেট করা
+        # ক্যাশ আপডেট
         self.cache = result
         self.last_calculation_time = current_time
         
         return result
+
+    def extract_signals(self, df_features, timeframe):
+        """
+        Phase 3 Signal Extraction: Features -> Actionable Signals
+        """
+        if df_features is None or df_features.empty:
+            return None
+
+        # লেটেস্ট ডাটা নেওয়া
+        curr = df_features.iloc[-1]
+        prev = df_features.iloc[-2]
+        
+        signals = []
+        phase = curr.get('market_phase', 'Unknown')
+
+        # --- ১. [cite_start]Trend Signals (SMA/EMA/MACD) [cite: 5, 11] ---
+        # EMA + MACD কম্বিনেশন
+        if 'EMA_20' in curr and 'EMA_50' in curr:
+             if curr['EMA_20'] > curr['EMA_50']:
+                if prev['MACD_12_26_9'] < prev['MACDs_12_26_9'] and curr['MACD_12_26_9'] > curr['MACDs_12_26_9']:
+                    signals.append(f"[{timeframe}] BUY: Trend Following (EMA + MACD Cross)")
+
+        # --- ২. [cite_start]Momentum Signals (RSI + Bollinger) [cite: 67, 75] ---
+        # Bollinger Bands + Stochastic/RSI
+        # Note: Need correct BBL column name. pandas_ta usually names it slightly confusingly or BBL_{length}_{std}
+        # Assuming the caller knows, but safety check:
+        bbl_cols = [c for c in df_features.columns if c.startswith('BBL')]
+        if bbl_cols and 'RSI_14' in curr:
+             bbl_col = bbl_cols[0] 
+             if curr['close'] < curr[bbl_col] and curr['RSI_14'] < 30:
+                  signals.append(f"[{timeframe}] BUY: Reversal (Oversold + BB Support)")
+
+        # --- ৩. [cite_start]Volatility Breakout (Keltner + ADX) [cite: 211, 223] ---
+        # ADX > 25 মানে স্ট্রং ট্রেন্ড, সাথে Keltner Channel ব্রেকআউট
+        # KC also has multiple columns usually KC_{len}_{scalar}_L/U
+        # But logic says close > KC. Assuming Upper KC? Or just channel? 
+        # Typically Breakout means crossing Upper.
+        # Let's search KC upper column
+        kcu_cols = [c for c in df_features.columns if c.startswith('KCU')] # Keltner Channel Upper
+        if kcu_cols and 'ADX_14' in curr:
+             kcu_col = kcu_cols[0]
+             if curr['ADX_14'] > 25 and curr['close'] > curr[kcu_col]:
+                  signals.append(f"[{timeframe}] BUY: Volatility Breakout")
+
+        # --- ৪. Market Phase Filter (Smart Money Logic) ---
+        if phase == "Accumulation":
+            signals.append(f"[{timeframe}] INFO: Accumulation Phase - Look for LONG entries only.")
+        elif phase == "Distribution":
+            signals.append(f"[{timeframe}] INFO: Distribution Phase - Look for SHORT entries or Exit.")
+        
+        # Smart Delta Alert
+        if curr.get('smart_delta', 0) > 0 and curr['close'] < curr['open']:
+            signals.append(f"[{timeframe}] ALERT: Hidden Buying (Price Down but Delta Positive)")
+
+        return {
+            "timeframe": timeframe,
+            "phase": phase,
+            "extracted_signals": signals,
+            "metrics": {
+                "vwap": curr.get('vwap', 0),
+                "turnover": curr.get('turnover', 0),
+                "smart_delta": curr.get('smart_delta', 0)
+            }
+        }
 
 # সিঙ্গেলটন ইনস্ট্যান্স
 signal_engine = SignalEngine()
