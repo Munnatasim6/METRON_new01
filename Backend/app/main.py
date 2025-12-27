@@ -13,6 +13,8 @@ from app.services.signal_engine import signal_engine
 from app.services.arbitrage_engine import arbitrage_engine
 from app.services.notification_manager import notification_manager
 from app.services.strategy_manager import strategy_manager
+from app.services.trade_executor import trade_executor
+from app.services.backtest_engine import backtest_engine
 from app.database import db
 from pydantic import BaseModel
 
@@ -98,6 +100,7 @@ async def broadcast_market_data():
                         # SignalEngine analyze_market_sentiment doesn't return phase.
                         # We will make StrategyManager robust to missing phase for now.
                         
+                        sentiment_result = signal_engine.analyze_market_sentiment(ohlcv)
                         decision = strategy_manager.get_strategy_decision(sentiment_result, market_phase="Unknown")
                         
                         # Payload Update with Strategy Info
@@ -152,6 +155,7 @@ async def startup_event():
 async def shutdown_event():
     await db.disconnect()
     await arbitrage_engine.close_connections()
+    await trade_executor.close_connections()
 
 # --- API Endpoints ---
 class StrategyRequest(BaseModel):
@@ -168,9 +172,43 @@ async def set_strategy(req: StrategyRequest):
 @app.get("/api/strategy")
 async def get_strategy():
     return {
-        "current_mode": strategy_manager.current_mode, 
+        "current_mode": strategy_manager.current_mode,
+        "strategy": strategy_manager.current_mode, # Frontend Compatibility
         "available_modes": list(strategy_manager.strategies.keys()) + ["AI-Adaptive"]
     }
+
+@app.get("/api/arbitrage")
+async def get_arbitrage(symbol: str = Query("BTC/USDT")):
+    """Live Arbitrage Opportunities (Backend Powered)"""
+    data = await arbitrage_engine.get_arbitrage_opportunities(symbol)
+    return {"data": data} if data else {"data": []}
+
+class TradingConfigRequest(BaseModel):
+    risk_percentage: float = None
+    paper_trading: bool = None
+
+@app.post("/api/config/trading")
+async def configure_trading(req: TradingConfigRequest):
+    await trade_executor.update_config(risk_pct=req.risk_percentage, paper_trading=req.paper_trading)
+    return {
+        "status": "success", 
+        "current_risk": trade_executor.risk_percentage, 
+        "paper_trading": trade_executor.paper_trading
+    }
+
+class BacktestRequest(BaseModel):
+    exchange: str = "binance"
+    symbol: str = "BTC/USDT"
+    timeframe: str = "1h"
+    limit: int = 1000
+    strategy: str = "Balanced"
+
+@app.post("/api/backtest")
+async def start_backtest(req: BacktestRequest):
+    result = await backtest_engine.run_backtest(
+        req.exchange, req.symbol, req.timeframe, req.limit, req.strategy
+    )
+    return result
 
 @app.websocket("/ws/feed")
 async def websocket_endpoint(websocket: WebSocket):
@@ -181,54 +219,8 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# --- REST API Endpoints ---
-
-@app.get("/api/exchanges")
-async def get_exchanges():
-    """Available Exchanges"""
-    return ["binance", "coinbase", "kraken", "kucoin"]
-
-@app.get("/api/markets/{exchange_id}")
-async def get_markets(exchange_id: str):
-    """Get Markets for an Exchange"""
-    try:
-        # CCXT Dynamic Loading
-        exchange_class = getattr(ccxt, exchange_id.lower())
-        async with exchange_class() as exchange:
-            # markets = await exchange.load_markets()
-            # return list(markets.keys())
-            # For speed, just returning top pairs mocked if load fails or for demo
-            # But let's try to fetch real
-             await exchange.load_markets()
-             return list(exchange.markets.keys())
-    except Exception as e:
-        # Fallback if offline
-        return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
-
-@app.get("/api/strategy")
-async def get_strategy():
-    """Current Strategy Config"""
-    return {
-        "strategy": "Hybrid Sentiment & Arbitrage",
-        "status": "ACTIVE",
-        "config": {
-            "sentiment_interval": "1m",
-            "arbitrage_threshold": 0.5
-        }
-    }
-
-@app.get("/api/arbitrage")
-async def get_arbitrage(symbol: str = Query("BTC/USDT")):
-    """Live Prices for Arbitrage Monitor"""
-    # Mocking live prices slightly different to show spread
-    base_price = 95600.0  # Just a realistic mock
-    return [
-        {"exchange": "Binance", "price": base_price, "logo": "🟡"},
-        {"exchange": "Coinbase", "price": base_price + 45.5, "logo": "🔵"},
-        {"exchange": "Kraken", "price": base_price - 22.0, "logo": "🟣"},
-        {"exchange": "KuCoin", "price": base_price + 18.2, "logo": "🟢"},
-        {"exchange": "Bybit", "price": base_price - 10.5, "logo": "⚫"}
-    ]
+# --- REST API Endpoints (Legacy Removed) ---
+# New dynamic endpoints are defined above.
 
 # System Control
 @app.post("/api/system/start")

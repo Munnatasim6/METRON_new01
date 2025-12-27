@@ -18,6 +18,17 @@ class Settings:
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
+
+    # Trading Settings
+    PAPER_TRADING: bool = os.getenv("PAPER_TRADING", "True").lower() == "true"
+    RISK_PERCENTAGE: float = float(os.getenv("RISK_PERCENTAGE", "2.0")) # Default 2%
+    
+    # Exchange Keys
+    BINANCE_API_KEY: str = os.getenv("BINANCE_API_KEY", "")
+    BINANCE_SECRET_KEY: str = os.getenv("BINANCE_SECRET_KEY", "")
+    KUCOIN_API_KEY: str = os.getenv("KUCOIN_API_KEY", "")
+    KUCOIN_SECRET_KEY: str = os.getenv("KUCOIN_SECRET_KEY", "")
+    KUCOIN_PASSPHRASE: str = os.getenv("KUCOIN_PASSPHRASE", "")
     
     # Connection String creation
     DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
