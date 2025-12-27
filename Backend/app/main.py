@@ -10,7 +10,11 @@ from typing import List
 # মডিউল ইম্পোর্ট (Database যোগ করা হয়েছে আগের নির্দেশনা অনুযায়ী)
 from app.services.stream_engine import market_stream
 from app.services.signal_engine import signal_engine
+from app.services.arbitrage_engine import arbitrage_engine
+from app.services.notification_manager import notification_manager
+from app.services.strategy_manager import strategy_manager
 from app.database import db
+from pydantic import BaseModel
 
 app = FastAPI(title="Metron Hybrid Brain (Advanced)")
 
@@ -53,10 +57,8 @@ async def broadcast_market_data():
     - সেন্টিমেন্ট/ইন্ডিকেটর: প্রতি ৬০ সেকেন্ডে (Slow)
     """
     error_count = 0
-    last_sentiment_time = 0  # টাইমার ট্র্যাক করার জন্য
-    
-    # এক্সচেঞ্জ একবারই ইনিশিয়েট করা ভালো (Context Manager লুপের বাইরে রাখা যেতে পারে যদি দীর্ঘ কানেকশন হয়)
-    # তবে ccxt async এর জন্য প্রতিবার কল করা সেফ, আমরা শুধু কল ফ্রিকোয়েন্সি কমাবো।
+    last_sentiment_time = 0 
+    last_arbitrage_time = 0 # Arbitrage টাইমার
 
     while True:
         try:
@@ -73,7 +75,6 @@ async def broadcast_market_data():
                 # ==========================================
                 # ১. ট্রেড ও টিকার আপডেট (FAST - প্রতি ২ সেকেন্ডে)
                 # ==========================================
-                # এটি সবসময় চলবে যাতে ইউজার রিয়েল-টাইম প্রাইস দেখে
                 trades = await exchange.fetch_trades(symbol, limit=10)
                 formatted_trades = [{
                     "id": t['id'], "price": t['price'], "amount": t['amount'], 
@@ -85,18 +86,49 @@ async def broadcast_market_data():
                 # ==========================================
                 # ২. সেন্টিমেন্ট এনালাইসিস (SLOW - প্রতি ১ মিনিটে)
                 # ==========================================
-                # টাইম-চেক: ৬০ সেকেন্ড পার হয়েছে কিনা?
                 if current_time - last_sentiment_time > 60:
-                    # ভারী ডেটা ফেচ (OHLCV) শুধু তখনই হবে যখন দরকার
                     ohlcv = await exchange.fetch_ohlcv(symbol, '1h', limit=100)
                     if ohlcv:
-                        # signal_engine নিজেই ক্যাশ চেক করবে, কিন্তু আমরা API কল বাঁচালাম
-                        sentiment_result = signal_engine.analyze_market_sentiment(ohlcv)
-                        sentiment_result["symbol"] = symbol
+                        # --- STRATEGY & DECISION LAYER ---
+                        # Signal Engine gives raw score, Strategy Manager decides ACTION
+                        # We guess phase from context or pass it if available. 
+                        # For now, simple assumption or fetching from last feature set (Optimized in Phase 4)
+                        # We will use "Consolidation" as default if unknown, but better to get from TechnicalIndicators
+                        # Since main.py doesn't access TI directly, we rely on what signal_engine provides?
+                        # SignalEngine analyze_market_sentiment doesn't return phase.
+                        # We will make StrategyManager robust to missing phase for now.
+                        
+                        decision = strategy_manager.get_strategy_decision(sentiment_result, market_phase="Unknown")
+                        
+                        # Payload Update with Strategy Info
+                        sentiment_result["strategy"] = decision
+                        
                         await manager.broadcast({"type": "SENTIMENT", "payload": sentiment_result})
                         
-                        last_sentiment_time = current_time # টাইমার আপডেট
-                        print("✅ Sentiment Updated (1 min interval)")
+                        # --- NOTIFICATION TRIGGER ---
+                        # Only notify if Strategy says YES (should_trade) OR if it's a significant State Change
+                        # We pass the strategy verdict (e.g. WAIT or BUY)
+                        current_price = ohlcv[-1][4]
+                        await notification_manager.send_alert(
+                            verdict=decision['final_verdict'], # Using Strategy Verdict instead of Raw
+                            symbol=symbol,
+                            price=current_price,
+                            details=f"Mode: {decision['strategy']} | Reason: {decision['reason']}"
+                        )
+
+                        last_sentiment_time = current_time 
+                        print(f"✅ Sentiment Updated | Mode: {decision['strategy']}")
+
+                # ==========================================
+                # ৩. আর্বিট্রেজ মনিটর (MEDIUM - প্রতি ২০ সেকেন্ডে)
+                # ==========================================
+                # API Rate Limit এড়ানোর জন্য ২০ সেকেন্ড ইন্টারভাল সেট করা হলো
+                if current_time - last_arbitrage_time > 20:
+                    arb_data = await arbitrage_engine.get_arbitrage_opportunities(symbol)
+                    if arb_data:
+                        await manager.broadcast({"type": "ARBITRAGE", "payload": arb_data})
+                        last_arbitrage_time = current_time
+                        print("✅ Arbitrage Data Updated (20s interval)")
 
             # লুপ ডিলে
             await asyncio.sleep(2)
@@ -116,10 +148,30 @@ async def startup_event():
     loop.create_task(broadcast_market_data())
 
 @app.on_event("shutdown")
+@app.on_event("shutdown")
 async def shutdown_event():
     await db.disconnect()
+    await arbitrage_engine.close_connections()
 
 # --- API Endpoints ---
+class StrategyRequest(BaseModel):
+    mode: str
+
+@app.post("/api/strategy")
+async def set_strategy(req: StrategyRequest):
+    success, msg = strategy_manager.set_mode(req.mode)
+    if success:
+        return {"status": "success", "message": msg, "current_mode": strategy_manager.current_mode}
+    else:
+        raise HTTPException(status_code=400, detail=msg)
+
+@app.get("/api/strategy")
+async def get_strategy():
+    return {
+        "current_mode": strategy_manager.current_mode, 
+        "available_modes": list(strategy_manager.strategies.keys()) + ["AI-Adaptive"]
+    }
+
 @app.websocket("/ws/feed")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)

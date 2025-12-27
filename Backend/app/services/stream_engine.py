@@ -9,10 +9,11 @@ from typing import Optional, Set
 from app.database import db
 
 
-# --- Data Sanitizer Import (New) ---
 from app.services.data_sanitizer import data_sanitizer
 from app.services.timeframe_manager import timeframe_manager
+from app.services.technical_indicators import technical_indicators
 from app.services.signal_engine import signal_engine
+from app.services.trade_executor import trade_executor
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
@@ -168,18 +169,39 @@ class LiveMarketStream:
             # ২. ডাটাফ্রেম কনভার্সন
             df_1m = pd.DataFrame(candles)
             if 'time' in df_1m.columns:
-                df_1m['datetime'] = pd.to_datetime(df_1m['time'])
+                if 'datetime' not in df_1m.columns:
+                     df_1m['datetime'] = pd.to_datetime(df_1m['time'])
                 df_1m.set_index('datetime', inplace=True)
                 df_1m.drop(columns=['time'], inplace=True)
             
-            # ৩. ট্রান্সফর্মেশন (Timeframe Manager)
+            # ৩. ট্রান্সফর্মেশন (Timeframe Manager) -> Analytical Layer (Technical Indicators)
             target_tf = "15T"
-            df_features = timeframe_manager.transform_data(df_1m, target_tf)
+            df_resampled = timeframe_manager.prepare_and_resample(df_1m, target_tf)
+            
+            if df_resampled is None or df_resampled.empty:
+                return
+
+            df_features = technical_indicators.apply_all_indicators(df_resampled)
 
             # ৪. সিগন্যাল এক্সট্রাকশন (Phase 3 Logic)
             signals_lab = None
             if df_features is not None:
                 signals_lab = signal_engine.extract_signals(df_features, target_tf)
+                
+                # ৫. ট্রেড এক্সিকিউশন (যদি স্ট্রং সিগন্যাল থাকে)
+                if signals_lab and signals_lab['extracted_signals']:
+                    # Simple Logic: If any BUY signal found in lab, try execute
+                    # This is just an integration demo, refined logic would be more complex
+                    current_price = df_features['close'].iloc[-1]
+                    for sig in signals_lab['extracted_signals']:
+                        if "BUY" in sig:
+                            trade_executor.execute_trade({
+                                "symbol": pair, "side": "BUY", "price": current_price
+                            })
+                        elif "SELL" in sig:
+                             trade_executor.execute_trade({
+                                "symbol": pair, "side": "SELL", "price": current_price
+                            })
 
             # ৫. লিগ্যাসি সেন্টিমেন্ট জেনারেশন (Frontend Compatibility)
             # Candles (Dict List) -> OHLCV (List of Lists) for Signal Engine
