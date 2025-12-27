@@ -5,3 +5,7 @@ ccxt
 pandas
 pandas_ta
 numpy
+# Database Dependencies
+asyncpg
+sqlalchemy
+python-dotenv
