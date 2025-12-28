@@ -1,3 +1,44 @@
+// Frontend/src/types.ts
+
+export interface MarketData {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+
+  // --- New Backend Calculated Fields ---
+  vwap?: number;
+  smart_delta?: number;
+  market_phase?: 'Accumulation' | 'Markup' | 'Distribution' | 'Markdown' | 'Consolidation';
+  activity_score?: number;
+  turnover?: number;
+
+  // Key Indicators (Top 70 subset for display)
+  rsi_14?: number;
+  adx_14?: number;
+  ema_50?: number;
+  ema_200?: number;
+  macd?: number;
+  macdh?: number; // Histogram
+  macds?: number; // Signal
+  atr?: number;
+
+  // Special
+  gann_angle?: number;
+  pivot_p?: number;
+  fractal_top?: boolean;
+  fractal_bottom?: boolean;
+}
+
+export interface SignalResponse {
+  status: string;
+  timeframe: string;
+  current_phase: string;
+  data: MarketData[];
+}
+
 export enum SystemStatus {
   RUNNING = 'RUNNING',
   STOPPED = 'STOPPED',
@@ -42,7 +83,7 @@ export interface SecretConfig {
   kucoinApiKey: string;
   kucoinSecretKey: string;
   kucoinPassphrase: string;
- 
+
   // Notifications
   telegramBotToken: string;
   telegramChatId: string;

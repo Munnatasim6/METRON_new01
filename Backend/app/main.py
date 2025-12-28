@@ -1,272 +1,112 @@
-import asyncio
-import json
-import time
-import ccxt.async_support as ccxt
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
+import pandas as pd
+import asyncio
+import logging
 
-# মডিউল ইম্পোর্ট (Database যোগ করা হয়েছে আগের নির্দেশনা অনুযায়ী)
-from app.services.stream_engine import market_stream
-from app.services.signal_engine import signal_engine
-from app.services.arbitrage_engine import arbitrage_engine
-from app.services.notification_manager import notification_manager
-from app.services.strategy_manager import strategy_manager
-from app.services.trade_executor import trade_executor
-from app.services.backtest_engine import backtest_engine
-from app.database import db
-from pydantic import BaseModel
+# নতুন সার্ভিস ইমপোর্ট
+from app.services.timeframe_manager import TimeframeManager
+from app.services.technical_indicators import TechnicalIndicators
+from app.services.stream_engine import StreamEngine
 
-app = FastAPI(title="Metron Hybrid Brain (Advanced)")
+# লগিং
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("MainAPI")
 
-# CORS
+app = FastAPI(title="Metron AI Trading Backend")
+
+# CORS (Frontend Connection)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # প্রোডাকশনে স্পেসিফিক ডোমেইন দেবেন
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# কানেকশন ম্যানেজার (আগের মতোই)
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
+# গ্লোবাল ইন্সট্যান্স
+stream_engine = StreamEngine()
+tf_manager = TimeframeManager()
+ti_engine = TechnicalIndicators()
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
+# মক ডাটাবেস (যেহেতু রিয়েল ডিবি কানেকশন কোড নেই, এটি প্লেসহোল্ডার)
+# বাস্তবে এটি database.py থেকে আসবে
+def get_mock_historical_data():
+    # এখানে অন্তত ২০০ ক্যান্ডেল জেনারেট করা উচিত টেস্টিংয়ের জন্য
+    dates = pd.date_range(end=pd.Timestamp.now(), periods=300, freq='1min')
+    data = {
+        'open': [100 + i*0.1 for i in range(300)],
+        'high': [101 + i*0.1 for i in range(300)],
+        'low': [99 + i*0.1 for i in range(300)],
+        'close': [100.5 + i*0.1 for i in range(300)],
+        'volume': [1000 + i*10 for i in range(300)]
+    }
+    df = pd.DataFrame(data, index=dates)
+    return df
 
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+@app.get("/")
+def read_root():
+    return {"status": "active", "system": "Metron AI Core i3 Optimized"}
 
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections[:]:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                self.disconnect(connection)
-
-manager = ConnectionManager()
-
-# --- ব্রডকাস্ট ইঞ্জিন (অপ্টিমাইজড) ---
-async def broadcast_market_data():
+@app.get("/api/v1/market-status")
+async def get_market_status(timeframe: str = Query("1H", description="Timeframe like 15T, 1H, 4H")):
     """
-    Decoupled Loop:
-    - প্রাইস এবং ট্রেড: প্রতি ২ সেকেন্ডে (Fast)
-    - সেন্টিমেন্ট/ইন্ডিকেটর: প্রতি ৬০ সেকেন্ডে (Slow)
+    ফ্রন্টএন্ড এই API কল করে ফুল চার্ট এবং এনালাইসিস ডাটা পাবে।
     """
-    error_count = 0
-    last_sentiment_time = 0 
-    last_arbitrage_time = 0 # Arbitrage টাইমার
-
-    while True:
-        try:
-            if not manager.active_connections:
-                await asyncio.sleep(3)
-                continue
-
-            current_time = time.time()
-            symbol = "BTC/USDT"
-
-            async with ccxt.binance() as exchange:
-                exchange.timeout = 3000
-                
-                # ==========================================
-                # ১. ট্রেড ও টিকার আপডেট (FAST - প্রতি ২ সেকেন্ডে)
-                # ==========================================
-                trades = await exchange.fetch_trades(symbol, limit=10)
-                formatted_trades = [{
-                    "id": t['id'], "price": t['price'], "amount": t['amount'], 
-                    "side": t['side'], "time": t['datetime'].split('T')[1][:8]
-                } for t in trades]
-                
-                await manager.broadcast({"type": "TRADES", "payload": formatted_trades})
-
-                # ==========================================
-                # ২. সেন্টিমেন্ট এনালাইসিস (SLOW - প্রতি ১ মিনিটে)
-                # ==========================================
-                if current_time - last_sentiment_time > 60:
-                    ohlcv = await exchange.fetch_ohlcv(symbol, '1h', limit=100)
-                    if ohlcv:
-                        # --- STRATEGY & DECISION LAYER ---
-                        # Signal Engine gives raw score, Strategy Manager decides ACTION
-                        # We guess phase from context or pass it if available. 
-                        # For now, simple assumption or fetching from last feature set (Optimized in Phase 4)
-                        # We will use "Consolidation" as default if unknown, but better to get from TechnicalIndicators
-                        # Since main.py doesn't access TI directly, we rely on what signal_engine provides?
-                        # SignalEngine analyze_market_sentiment doesn't return phase.
-                        # We will make StrategyManager robust to missing phase for now.
-                        
-                        sentiment_result = signal_engine.analyze_market_sentiment(ohlcv)
-                        decision = strategy_manager.get_strategy_decision(sentiment_result, market_phase="Unknown")
-                        
-                        # Payload Update with Strategy Info
-                        sentiment_result["strategy"] = decision
-                        
-                        await manager.broadcast({"type": "SENTIMENT", "payload": sentiment_result})
-                        
-                        # --- NOTIFICATION TRIGGER ---
-                        # Only notify if Strategy says YES (should_trade) OR if it's a significant State Change
-                        # We pass the strategy verdict (e.g. WAIT or BUY)
-                        current_price = ohlcv[-1][4]
-                        await notification_manager.send_alert(
-                            verdict=decision['final_verdict'], # Using Strategy Verdict instead of Raw
-                            symbol=symbol,
-                            price=current_price,
-                            details=f"Mode: {decision['strategy']} | Reason: {decision['reason']}"
-                        )
-
-                        last_sentiment_time = current_time 
-                        print(f"✅ Sentiment Updated | Mode: {decision['strategy']}")
-
-                # ==========================================
-                # ৩. আর্বিট্রেজ মনিটর (MEDIUM - প্রতি ২০ সেকেন্ডে)
-                # ==========================================
-                # API Rate Limit এড়ানোর জন্য ২০ সেকেন্ড ইন্টারভাল সেট করা হলো
-                if current_time - last_arbitrage_time > 20:
-                    arb_data = await arbitrage_engine.get_arbitrage_opportunities(symbol)
-                    if arb_data:
-                        await manager.broadcast({"type": "ARBITRAGE", "payload": arb_data})
-                        last_arbitrage_time = current_time
-                        print("✅ Arbitrage Data Updated (20s interval)")
-
-            # লুপ ডিলে
-            await asyncio.sleep(2)
-
-        except Exception as e:
-            error_count += 1
-            sleep_time = min(30, 2 * error_count)
-            print(f"⚠️ Broadcast Error: {e}")
-            await asyncio.sleep(sleep_time)
-
-# --- ইভেন্টস ---
-@app.on_event("startup")
-async def startup_event():
-    await db.connect() # ডাটাবেস কানেকশন
-    loop = asyncio.get_event_loop()
-    loop.create_task(market_stream.start_engine())
-    loop.create_task(broadcast_market_data())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await db.disconnect()
-    await arbitrage_engine.close_connections()
-    await trade_executor.close_connections()
-
-# --- API Endpoints ---
-@app.get("/api/exchanges")
-async def get_exchanges():
-    """Returns list of supported exchanges"""
-    return {"exchanges": ["binance", "kucoin", "bybit"]}
-
-@app.get("/api/markets/{exchange_id}")
-async def get_markets(exchange_id: str):
-    """Returns list of markets for specific exchange"""
     try:
-        # We can enable other exchanges later. For now support binance mainly.
-        if exchange_id == "binance":
-            async with ccxt.binance() as exchange:
-                markets = await exchange.load_markets()
-                pairs = list(markets.keys())
-                # Filter for USDT pairs for simplicity in this version
-                usdt_pairs = [p for p in pairs if p.endswith('/USDT')]
-                return {"markets": usdt_pairs}
-        elif exchange_id == "kucoin":
-             async with ccxt.kucoin() as exchange:
-                markets = await exchange.load_markets()
-                pairs = list(markets.keys())
-                usdt_pairs = [p for p in pairs if p.endswith('/USDT')]
-                return {"markets": usdt_pairs}
-        else:
-            return {"markets": ["BTC/USDT", "ETH/USDT"]}
+        # ১. ডাটা আনা (DB থেকে)
+        raw_df = get_mock_historical_data() # Replace with real DB fetch
+        
+        # ২. প্রসেসিং (Timeframe Resample)
+        # map frontend timeframe (1H) to pandas (1h) if needed
+        tf_map = {"1H": "1h", "4H": "4h", "15m": "15T", "1D": "1D"}
+        target_tf = tf_map.get(timeframe, "1h")
+        
+        resampled_df = tf_manager.prepare_and_resample(raw_df, target_tf)
+        
+        if resampled_df is None or resampled_df.empty:
+            return {"status": "error", "message": "Insufficient data"}
+
+        # ৩. ইন্ডিকেটর অ্যাপ্লাই
+        final_df = ti_engine.apply_all_indicators(resampled_df)
+        
+        # ৪. রেসপন্স ফরম্যাট (JSON)
+        # NaN ভ্যালু None এ কনভার্ট করা
+        records = final_df.reset_index().to_dict(orient='records')
+        clean_records = [{k: (v if pd.notna(v) else None) for k, v in rec.items()} for rec in records]
+        
+        # লেটেস্ট ফেজ
+        current_phase = final_df.iloc[-1].get('market_phase', 'Unknown')
+
+        return {
+            "status": "success",
+            "timeframe": timeframe,
+            "current_phase": current_phase,
+            "data": clean_records
+        }
+
     except Exception as e:
-        print(f"Error fetching markets: {e}")
-        return {"markets": ["BTC/USDT", "ETH/USDT"]} # Fallback
-
-class StrategyRequest(BaseModel):
-    mode: str
-
-@app.post("/api/strategy")
-async def set_strategy(req: StrategyRequest):
-    success, msg = strategy_manager.set_mode(req.mode)
-    if success:
-        return {"status": "success", "message": msg, "current_mode": strategy_manager.current_mode}
-    else:
-        raise HTTPException(status_code=400, detail=msg)
-
-@app.get("/api/strategy")
-async def get_strategy():
-    return {
-        "current_mode": strategy_manager.current_mode,
-        "strategy": strategy_manager.current_mode, # Frontend Compatibility
-        "available_modes": list(strategy_manager.strategies.keys()) + ["AI-Adaptive"]
-    }
-
-@app.get("/api/arbitrage")
-async def get_arbitrage(symbol: str = Query("BTC/USDT")):
-    """Live Arbitrage Opportunities (Backend Powered)"""
-    data = await arbitrage_engine.get_arbitrage_opportunities(symbol)
-    return {"data": data} if data else {"data": []}
-
-class TradingConfigRequest(BaseModel):
-    risk_percentage: float = None
-    paper_trading: bool = None
-
-@app.post("/api/config/trading")
-async def configure_trading(req: TradingConfigRequest):
-    await trade_executor.update_config(risk_pct=req.risk_percentage, paper_trading=req.paper_trading)
-    return {
-        "status": "success", 
-        "current_risk": trade_executor.risk_percentage, 
-        "paper_trading": trade_executor.paper_trading
-    }
-
-class BacktestRequest(BaseModel):
-    exchange: str = "binance"
-    symbol: str = "BTC/USDT"
-    timeframe: str = "1h"
-    limit: int = 1000
-    strategy: str = "Balanced"
-    initial_balance: float = 1000.0
-    fee_percent: float = 0.1
-    slippage_percent: float = 0.1
-
-@app.post("/api/backtest")
-async def start_backtest(req: BacktestRequest):
-    result = await backtest_engine.run_backtest(
-        req.exchange, 
-        req.symbol, 
-        req.timeframe, 
-        req.limit, 
-        req.strategy,
-        initial_balance=req.initial_balance,
-        fee_percent=req.fee_percent,
-        slippage_percent=req.slippage_percent
-    )
-    return result
+        logger.error(f"API Error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.websocket("/ws/feed")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    """
+    রিয়েল-টাইম ডাটা স্ট্রিমিং পয়েন্ট
+    """
+    await stream_engine.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            # ক্লায়েন্ট থেকে কোনো মেসেজ আসলে (যেমন সাবস্ক্রিপশন রিকোয়েস্ট)
+            data = await websocket.receive_text()
+            # এখানে দরকার হলে লজিক বসানো যাবে
+            
+            # সিমুলেশন: রিয়েল সিস্টেমে এক্সচেঞ্জ কানেক্টর এখানে stream_engine.broadcast কল করবে
+            # আপাতত stream_engine.broadcast() অন্য কোনো থ্রেড বা লুপ থেকে কল হবে
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        stream_engine.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket Error: {e}")
+        stream_engine.disconnect(websocket)
 
-# --- REST API Endpoints (Legacy Removed) ---
-# New dynamic endpoints are defined above.
-
-# System Control
-@app.post("/api/system/start")
-async def start_system():
-    # Trigger logic here
-    return {"status": "ONLINE", "message": "System Started"}
-
-@app.post("/api/system/stop")
-async def stop_system():
-    return {"status": "OFFLINE", "message": "System Stopped"}
-
+# ব্যাকগ্রাউন্ড টাস্ক হিসেবে এক্সচেঞ্জ লিসেনার রান করতে হবে (main.py এর শেষে বা আলাদা ফাইলে)
