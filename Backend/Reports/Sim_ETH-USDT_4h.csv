@@ -1,0 +1,2 @@
+entry_time,exit_time,entry_price,exit_price,profit_usdt,profit_pct,fees_paid,strategy
+2025-09-25 00:00:00,2025-09-25 04:00:00,4061.78988,4004.9365300000004,-7.584865174918411,-1.3503869382824887,0.9428830178429246,Aggressive

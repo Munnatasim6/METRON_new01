@@ -50,9 +50,9 @@ export const useAppStore = create<AppState>()(
       toggleSystem: (hasApiKey) => {
         const { status, addLog, soundEnabled } = get();
         if (status === SystemStatus.STOPPED) {
-          if (!hasApiKey) {
-            return;
-          }
+          // if (!hasApiKey) {
+          //   return;
+          // }
           set({ status: SystemStatus.RUNNING });
           addLog('INFO', 'System Engine Started. Strategies initialized.');
           if (soundEnabled) playSound('click');

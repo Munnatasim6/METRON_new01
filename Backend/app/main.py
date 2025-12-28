@@ -151,13 +151,41 @@ async def startup_event():
     loop.create_task(broadcast_market_data())
 
 @app.on_event("shutdown")
-@app.on_event("shutdown")
 async def shutdown_event():
     await db.disconnect()
     await arbitrage_engine.close_connections()
     await trade_executor.close_connections()
 
 # --- API Endpoints ---
+@app.get("/api/exchanges")
+async def get_exchanges():
+    """Returns list of supported exchanges"""
+    return {"exchanges": ["binance", "kucoin", "bybit"]}
+
+@app.get("/api/markets/{exchange_id}")
+async def get_markets(exchange_id: str):
+    """Returns list of markets for specific exchange"""
+    try:
+        # We can enable other exchanges later. For now support binance mainly.
+        if exchange_id == "binance":
+            async with ccxt.binance() as exchange:
+                markets = await exchange.load_markets()
+                pairs = list(markets.keys())
+                # Filter for USDT pairs for simplicity in this version
+                usdt_pairs = [p for p in pairs if p.endswith('/USDT')]
+                return {"markets": usdt_pairs}
+        elif exchange_id == "kucoin":
+             async with ccxt.kucoin() as exchange:
+                markets = await exchange.load_markets()
+                pairs = list(markets.keys())
+                usdt_pairs = [p for p in pairs if p.endswith('/USDT')]
+                return {"markets": usdt_pairs}
+        else:
+            return {"markets": ["BTC/USDT", "ETH/USDT"]}
+    except Exception as e:
+        print(f"Error fetching markets: {e}")
+        return {"markets": ["BTC/USDT", "ETH/USDT"]} # Fallback
+
 class StrategyRequest(BaseModel):
     mode: str
 
@@ -202,11 +230,21 @@ class BacktestRequest(BaseModel):
     timeframe: str = "1h"
     limit: int = 1000
     strategy: str = "Balanced"
+    initial_balance: float = 1000.0
+    fee_percent: float = 0.1
+    slippage_percent: float = 0.1
 
 @app.post("/api/backtest")
 async def start_backtest(req: BacktestRequest):
     result = await backtest_engine.run_backtest(
-        req.exchange, req.symbol, req.timeframe, req.limit, req.strategy
+        req.exchange, 
+        req.symbol, 
+        req.timeframe, 
+        req.limit, 
+        req.strategy,
+        initial_balance=req.initial_balance,
+        fee_percent=req.fee_percent,
+        slippage_percent=req.slippage_percent
     )
     return result
 

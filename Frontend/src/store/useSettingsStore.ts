@@ -1,18 +1,20 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { HardwareConfig, StrategyConfig, RiskConfig, UserSettings, StrategyPreset } from '../types';
+import { HardwareConfig, StrategyConfig, RiskConfig, UserSettings, StrategyPreset, SecretConfig } from '../types';
 
 interface SettingsState {
   hardwareConfig: HardwareConfig;
   strategyConfig: StrategyConfig;
   riskConfig: RiskConfig;
   userSettings: UserSettings;
+  secretConfig: SecretConfig;
   presets: StrategyPreset[];
 
   setHardwareConfig: (config: HardwareConfig) => void;
   setStrategyConfig: (config: StrategyConfig) => void;
   setRiskConfig: (config: RiskConfig) => void;
   setUserSettings: (settings: UserSettings) => void;
+  setSecretConfig: (config: SecretConfig) => void;
   addPreset: (preset: StrategyPreset) => void;
 }
 
@@ -29,6 +31,21 @@ const DEFAULT_RISK: RiskConfig = {
   sizingMode: 'Dynamic',
 };
 
+const DEFAULT_SECRETS: SecretConfig = {
+  binanceApiKey: '',
+  binanceSecretKey: '',
+  kucoinApiKey: '',
+  kucoinSecretKey: '',
+  kucoinPassphrase: '',
+  telegramBotToken: '',
+  telegramChatId: '',
+  discordWebhookUrl: '',
+  telegramEnabled: false,
+  discordEnabled: false,
+  maxDailyDrawdown: 10,
+  maxRiskPerTrade: 2,
+};
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -36,12 +53,14 @@ export const useSettingsStore = create<SettingsState>()(
       strategyConfig: DEFAULT_STRATEGY,
       riskConfig: DEFAULT_RISK,
       userSettings: { apiKey: '', apiSecret: '' },
+      secretConfig: DEFAULT_SECRETS,
       presets: [],
 
       setHardwareConfig: (config) => set({ hardwareConfig: config }),
       setStrategyConfig: (config) => set({ strategyConfig: config }),
       setRiskConfig: (config) => set({ riskConfig: config }),
       setUserSettings: (settings) => set({ userSettings: settings }),
+      setSecretConfig: (config) => set({ secretConfig: config }),
       addPreset: (preset) => set((state) => ({ presets: [...state.presets, preset] })),
     }),
     {

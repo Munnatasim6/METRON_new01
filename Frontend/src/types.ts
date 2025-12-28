@@ -34,6 +34,27 @@ export interface StrategyConfig {
   confidence: number;
 }
 
+// Credentials & Advanced Secrets
+export interface SecretConfig {
+  // Exchange API
+  binanceApiKey: string;
+  binanceSecretKey: string;
+  kucoinApiKey: string;
+  kucoinSecretKey: string;
+  kucoinPassphrase: string;
+ 
+  // Notifications
+  telegramBotToken: string;
+  telegramChatId: string;
+  discordWebhookUrl: string;
+  telegramEnabled: boolean;
+  discordEnabled: boolean;
+
+  // Advanced Risk
+  maxDailyDrawdown: number; // Hard stop %
+  maxRiskPerTrade: number; // Max allowed risk %
+}
+
 export interface RiskConfig {
   dailyLossLimit: number;
   assets: {

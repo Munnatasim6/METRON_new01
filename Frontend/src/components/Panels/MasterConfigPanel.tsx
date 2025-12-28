@@ -13,8 +13,14 @@ import {
   Terminal,
   Check,
   Power,
+  Lock,
+  Eye,
+  EyeOff,
+  Key,
+  Webhook,
+  MessageSquare,
 } from 'lucide-react';
-import { HardwareConfig, StrategyConfig, RiskConfig } from '../../types';
+import { HardwareConfig, StrategyConfig, RiskConfig, SecretConfig } from '../../types';
 
 interface Props {
   hwConfig: HardwareConfig;
@@ -23,10 +29,13 @@ interface Props {
   setStratConfig: (c: StrategyConfig) => void;
   riskConfig: RiskConfig;
   setRiskConfig: (c: RiskConfig) => void;
+  secretConfig: SecretConfig;
+  setSecretConfig: (c: SecretConfig) => void;
   onKillSwitch: () => void;
   onApplyHw: () => void;
   onApplyStrat: () => void;
   onApplyRisk: () => void;
+  onApplySecrets: () => void;
 }
 
 const MasterConfigPanel: React.FC<Props> = ({
@@ -36,14 +45,18 @@ const MasterConfigPanel: React.FC<Props> = ({
   setStratConfig,
   riskConfig,
   setRiskConfig,
+  secretConfig,
+  setSecretConfig,
   onKillSwitch,
   onApplyHw,
   onApplyStrat,
   onApplyRisk,
+  onApplySecrets,
 }) => {
   // --- STRATEGY LOG LOGIC ---
   const [logs, setLogs] = useState<{ time: string; type: string; msg: string }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [showSecrets, setShowSecrets] = useState(false);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -92,7 +105,7 @@ const MasterConfigPanel: React.FC<Props> = ({
   };
 
   return (
-    <div className='p-6 h-full flex flex-col animate-fade-in bg-gray-950 overflow-y-auto custom-scrollbar'>
+    <div className='p-6 h-full flex flex-col animate-fade-in bg-gray-950 overflow-y-auto custom-scrollbar text-white'>
       {/* PAGE HEADER */}
       <div className='flex items-center gap-3 mb-6 border-b border-gray-800 pb-4 shrink-0'>
         <div className='p-2 bg-white/5 rounded-lg'>
@@ -322,8 +335,204 @@ const MasterConfigPanel: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* SECRETS SECTION */}
+      <div className='bg-red-900/10 border border-red-900/30 rounded-xl p-5 shadow-lg mb-6'>
+        <div className='flex items-center justify-between mb-4 pb-2 border-b border-red-900/30'>
+          <div className='flex items-center gap-2'>
+            <Lock className='text-red-500' size={18} />
+            <h3 className='text-sm font-bold text-red-400 font-mono'>
+              SECURE CREDENTIALS & ADVANCED LIMITS
+            </h3>
+          </div>
+          <button
+            onClick={() => setShowSecrets(!showSecrets)}
+            className='flex items-center gap-2 text-xs font-mono text-red-400/70 hover:text-red-400 transition-colors'
+          >
+            {showSecrets ? <EyeOff size={14} /> : <Eye size={14} />}
+            {showSecrets ? 'HIDE SECRETS' : 'SHOW SECRETS'}
+          </button>
+        </div>
+
+        {showSecrets ? (
+          <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in'>
+            {/* API KEYS */}
+            <div className='space-y-3'>
+              <h4 className='text-xs font-bold text-gray-500 font-mono uppercase'>Exchange Keys</h4>
+              {[
+                { label: 'Binance API Key', key: 'binanceApiKey' },
+                { label: 'Binance Secret', key: 'binanceSecretKey' },
+                { label: 'KuCoin API Key', key: 'kucoinApiKey' },
+                { label: 'KuCoin Secret', key: 'kucoinSecretKey' },
+                { label: 'KuCoin Passphrase', key: 'kucoinPassphrase' },
+              ].map((field) => (
+                <div key={field.key} className='space-y-1'>
+                  <label className='text-[10px] font-mono text-gray-500'>{field.label}</label>
+                  <div className='relative'>
+                    <input
+                      type='password'
+                      value={(secretConfig as any)[field.key]}
+                      onChange={(e) =>
+                        setSecretConfig({ ...secretConfig, [field.key]: e.target.value })
+                      }
+                      className='w-full bg-black/40 border border-gray-800 rounded px-2 py-1.5 text-xs font-mono text-white focus:border-red-500/50 focus:outline-none transition-colors'
+                      placeholder='••••••••••••••••••••••••'
+                    />
+                    <Key
+                      size={10}
+                      className='absolute right-2 top-1/2 -translate-y-1/2 text-gray-600'
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* NOTIFICATIONS */}
+            <div className='space-y-3'>
+              <h4 className='text-xs font-bold text-gray-500 font-mono uppercase'>Notifications</h4>
+              <div className='space-y-4'>
+                <div className='space-y-1'>
+                  <label className='text-[10px] font-mono text-gray-500'>Telegram Bot Token</label>
+                  <input
+                    type='password'
+                    value={secretConfig.telegramBotToken}
+                    onChange={(e) =>
+                      setSecretConfig({ ...secretConfig, telegramBotToken: e.target.value })
+                    }
+                    className='w-full bg-black/40 border border-gray-800 rounded px-2 py-1.5 text-xs font-mono text-white focus:border-blue-500/50 focus:outline-none'
+                  />
+                </div>
+                <div className='space-y-1'>
+                  <label className='text-[10px] font-mono text-gray-500'>Telegram Chat ID</label>
+                  <input
+                    type='text'
+                    value={secretConfig.telegramChatId}
+                    onChange={(e) =>
+                      setSecretConfig({ ...secretConfig, telegramChatId: e.target.value })
+                    }
+                    className='w-full bg-black/40 border border-gray-800 rounded px-2 py-1.5 text-xs font-mono text-white focus:border-blue-500/50 focus:outline-none'
+                  />
+                </div>
+                <div className='space-y-1'>
+                  <label className='text-[10px] font-mono text-gray-500'>Discord Webhook</label>
+                  <input
+                    type='password'
+                    value={secretConfig.discordWebhookUrl}
+                    onChange={(e) =>
+                      setSecretConfig({ ...secretConfig, discordWebhookUrl: e.target.value })
+                    }
+                    className='w-full bg-black/40 border border-gray-800 rounded px-2 py-1.5 text-xs font-mono text-white focus:border-indigo-500/50 focus:outline-none'
+                  />
+                </div>
+                <div className='flex gap-2 pt-2'>
+                  <button
+                    onClick={() =>
+                      setSecretConfig({
+                        ...secretConfig,
+                        telegramEnabled: !secretConfig.telegramEnabled,
+                      })
+                    }
+                    className={`flex-1 py-1.5 rounded text-[10px] font-bold border flex items-center justify-center gap-1 ${secretConfig.telegramEnabled
+                        ? 'bg-blue-500/20 border-blue-500 text-blue-400'
+                        : 'bg-gray-800 border-gray-700 text-gray-500'
+                      }`}
+                  >
+                    <MessageSquare size={12} /> Telegram
+                  </button>
+                  <button
+                    onClick={() =>
+                      setSecretConfig({
+                        ...secretConfig,
+                        discordEnabled: !secretConfig.discordEnabled,
+                      })
+                    }
+                    className={`flex-1 py-1.5 rounded text-[10px] font-bold border flex items-center justify-center gap-1 ${secretConfig.discordEnabled
+                        ? 'bg-indigo-500/20 border-indigo-500 text-indigo-400'
+                        : 'bg-gray-800 border-gray-700 text-gray-500'
+                      }`}
+                  >
+                    <Webhook size={12} /> Discord
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* HARD LIMITS */}
+            <div className='space-y-3 flex flex-col'>
+              <h4 className='text-xs font-bold text-gray-500 font-mono uppercase'>
+                System Hard Limits
+              </h4>
+              <div className='p-4 bg-black/40 border border-red-900/30 rounded flex-1 space-y-4'>
+                <div>
+                  <div className='flex justify-between text-[10px] font-mono md:mb-1'>
+                    <span className='text-gray-400'>Max Daily Drawdown (System Kill)</span>
+                    <span className='text-red-500 font-bold'>
+                      {secretConfig.maxDailyDrawdown}%
+                    </span>
+                  </div>
+                  <input
+                    type='range'
+                    min='2'
+                    max='20'
+                    step='0.5'
+                    value={secretConfig.maxDailyDrawdown}
+                    onChange={(e) =>
+                      setSecretConfig({
+                        ...secretConfig,
+                        maxDailyDrawdown: parseFloat(e.target.value),
+                      })
+                    }
+                    className='w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-red-500'
+                  />
+                </div>
+
+                <div>
+                  <div className='flex justify-between text-[10px] font-mono md:mb-1'>
+                    <span className='text-gray-400'>Max Risk Per Individual Trade</span>
+                    <span className='text-orange-400 font-bold'>{secretConfig.maxRiskPerTrade}%</span>
+                  </div>
+                  <input
+                    type='range'
+                    min='0.1'
+                    max='5'
+                    step='0.1'
+                    value={secretConfig.maxRiskPerTrade}
+                    onChange={(e) =>
+                      setSecretConfig({
+                        ...secretConfig,
+                        maxRiskPerTrade: parseFloat(e.target.value),
+                      })
+                    }
+                    className='w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-orange-500'
+                  />
+                </div>
+
+                <div className='mt-auto pt-4'>
+                  <button
+                    onClick={onApplySecrets}
+                    className='w-full py-3 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(220,38,38,0.3)] transition-all'
+                  >
+                    <Lock size={14} /> SAVE SECURE CONFIG
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className='h-32 flex flex-col items-center justify-center text-gray-600 border border-dashed border-gray-800 rounded bg-black/20'>
+            <Lock size={32} className='mb-2 opacity-50' />
+            <span className='text-xs font-mono mb-2'>CREDENTIALS ARE ENCRYPTED & HIDDEN</span>
+            <button
+              onClick={() => setShowSecrets(true)}
+              className='text-[10px] px-3 py-1 bg-gray-800 hover:bg-gray-700 text-white rounded transition-colors'
+            >
+              Unlock Vault
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* BOTTOM ROW: LIVE STRATEGY LOGS */}
-      <div className='flex-1 min-h-[300px] bg-black border border-gray-800 rounded-xl overflow-hidden flex flex-col shadow-lg'>
+      <div className='flex-1 min-h-[250px] bg-black border border-gray-800 rounded-xl overflow-hidden flex flex-col shadow-lg'>
         <div className='bg-gray-900/80 p-3 border-b border-gray-800 flex justify-between items-center'>
           <div className='flex items-center gap-2 text-xs font-mono font-bold text-gray-400'>
             <Terminal size={14} /> LIVE INFERENCE STREAM
@@ -344,15 +553,14 @@ const MasterConfigPanel: React.FC<Props> = ({
             >
               <span className='text-gray-600 shrink-0 select-none'>[{log.time}]</span>
               <span
-                className={`font-bold shrink-0 w-24 ${
-                  log.type === 'INFERENCE'
+                className={`font-bold shrink-0 w-24 ${log.type === 'INFERENCE'
                     ? 'text-blue-400'
                     : log.type === 'WEIGHTS'
                       ? 'text-purple-400'
                       : log.type === 'DECISION'
                         ? 'text-green-400'
                         : 'text-gray-500'
-                }`}
+                  }`}
               >
                 {log.type}
               </span>

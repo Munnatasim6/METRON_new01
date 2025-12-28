@@ -13,6 +13,8 @@ const MasterConfigPage: React.FC = () => {
     setStrategyConfig,
     riskConfig,
     setRiskConfig,
+    secretConfig,
+    setSecretConfig,
   } = useSettingsStore();
 
   const { setStatus, addLog, soundEnabled } = useAppStore();
@@ -37,6 +39,11 @@ const MasterConfigPage: React.FC = () => {
     if (soundEnabled) playSound('click');
   };
 
+  const handleApplySecrets = () => {
+    addLog('ALERT', 'Secure Configuration Updated');
+    if (soundEnabled) playSound('click');
+  };
+
   const handleKillSwitch = () => {
     setStatus(SystemStatus.STOPPED);
     addLog('ALERT', 'Kill Switch Activated via Config');
@@ -50,10 +57,13 @@ const MasterConfigPage: React.FC = () => {
       setStratConfig={setStrategyConfig}
       riskConfig={riskConfig}
       setRiskConfig={setRiskConfig}
+      secretConfig={secretConfig}
+      setSecretConfig={setSecretConfig}
       onKillSwitch={handleKillSwitch}
       onApplyHw={handleApplyHw}
       onApplyStrat={handleApplyStrat}
       onApplyRisk={handleApplyRisk}
+      onApplySecrets={handleApplySecrets}
     />
   );
 };

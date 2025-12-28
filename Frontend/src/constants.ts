@@ -16,6 +16,7 @@ import {
   Box,
   Eye,
   Sliders,
+  FlaskConical,
 } from 'lucide-react';
 import { AppModule } from './types';
 
@@ -105,10 +106,10 @@ export const APP_MODULES: AppModule[] = [
     color: 'text-yellow-400',
   },
   {
-    id: 'backtesting',
-    label: 'Backtesting',
-    icon: History,
-    desc: 'Simulation Lab',
+    id: 'simulation',
+    label: 'Simulation Lab',
+    icon: FlaskConical,
+    desc: 'Backtest & Optimize',
     color: 'text-indigo-300',
   },
   {

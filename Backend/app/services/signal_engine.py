@@ -64,7 +64,7 @@ class SignalEngine:
 
         # ৩. NaN এবং Inf হ্যান্ডলিং
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
-        df.fillna(method='ffill', inplace=True)
+        df.ffill(inplace=True) # Updated from fillna(method='ffill')
         df.fillna(0, inplace=True)
 
         # রিসেট ভোটিং

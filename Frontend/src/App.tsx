@@ -10,6 +10,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const MonitorPage = lazy(() => import('./pages/MonitorPage'));
 const StrategyPage = lazy(() => import('./pages/StrategyPage'));
 const MasterConfigPage = lazy(() => import('./pages/MasterConfigPage'));
+const SimulationPage = lazy(() => import('./pages/SimulationPage'));
 const ModulePage = lazy(() => import('./pages/ModulePage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
@@ -26,6 +27,7 @@ const App: React.FC = () => {
             <Route path='monitor' element={<MonitorPage />} />
             <Route path='strategy' element={<StrategyPage />} />
             <Route path='master_config' element={<MasterConfigPage />} />
+            <Route path='simulation' element={<SimulationPage />} />
             <Route path=':moduleId' element={<ModulePage />} />
             <Route path='*' element={<NotFoundPage />} />
           </Route>
