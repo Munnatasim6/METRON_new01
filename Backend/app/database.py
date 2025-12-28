@@ -1,155 +1,137 @@
 import asyncpg
 import logging
-import asyncio
+import pandas as pd
+from datetime import datetime
 from app.core.config import settings
 
-# লগিং সেটআপ
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Database")
+logger = logging.getLogger("TimescaleDB")
 
 class Database:
     def __init__(self):
         self.pool = None
 
     async def connect(self):
-        """ডাটাবেস কানেকশন পুল তৈরি করা (Core i3 অপ্টিমাইজড)"""
-        if not self.pool:
-            try:
-                self.pool = await asyncpg.create_pool(
-                    user=settings.POSTGRES_USER,
-                    password=settings.POSTGRES_PASSWORD,
-                    database=settings.POSTGRES_DB,
-                    host=settings.POSTGRES_SERVER,
-                    port=settings.POSTGRES_PORT,
-                    min_size=1,
-                    max_size=10 # i3 এর জন্য কানেকশন সংখ্যা লিমিট রাখা ভালো
-                )
-                logger.info("✅ Database Connection Pool Created")
-                await self.init_tables()
-            except Exception as e:
-                logger.error(f"❌ DB Connection Error: {e}")
-
-    async def disconnect(self):
-        if self.pool:
-            await self.pool.close()
-            logger.info("🛑 Database Connection Closed")
-
-    async def init_tables(self):
-        """টেবিল এবং হাইপারটেবিল তৈরি করা"""
-        queries = [
-            # ১. সেটিংস টেবিল (User Configuration)
-            """
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            );
-            """,
-            
-            # ২. ট্রেড টেবিল (Bot Trades)
-            """
-            CREATE TABLE IF NOT EXISTS trades (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT NOT NULL,
-                side TEXT NOT NULL, -- BUY or SELL
-                price DOUBLE PRECISION NOT NULL,
-                amount DOUBLE PRECISION NOT NULL,
-                strategy TEXT,
-                timestamp TIMESTAMPTZ DEFAULT NOW()
-            );
-            """,
-
-            # ৩. মার্কেট ডাটা টেবিল (1-Minute Candles)
-            """
-            CREATE TABLE IF NOT EXISTS candles_1m (
-                time TIMESTAMPTZ NOT NULL,
-                symbol TEXT NOT NULL,
-                open DOUBLE PRECISION NOT NULL,
-                high DOUBLE PRECISION NOT NULL,
-                low DOUBLE PRECISION NOT NULL,
-                close DOUBLE PRECISION NOT NULL,
-                volume DOUBLE PRECISION NOT NULL,
-                UNIQUE (time, symbol)
-            );
-            """,
-
-            # ৪. TimescaleDB হাইপারটেবিল কনভারশন (Magic Step)
-            # এটি সাধারণ টেবিলকে টাইম-সিরিজ পাওয়ারহাউজে রূপান্তর করে
-            """
-            SELECT create_hypertable('candles_1m', 'time', if_not_exists => TRUE);
-            """
-        ]
-
-        async with self.pool.acquire() as conn:
-            for query in queries:
-                try:
-                    await conn.execute(query)
-                except Exception as e:
-                    logger.error(f"Table Creation Error: {e}")
-            logger.info("✅ Database Tables & Hypertables Ready")
-
-    # --- Data Ingestion Methods ---
-
-    async def insert_trade_data(self, symbol: str, price: float, side: str = "UNKNOWN"):
-        """লাইভ ট্রেড ডাটা সেভ করা"""
-        if not self.pool: return
-        query = """
-            INSERT INTO trades (symbol, side, price, amount) 
-            VALUES ($1, $2, $3, $4)
-        """
         try:
-            # i3 অপ্টিমাইজেশন: আমরা এখানে await ব্যবহার করছি কিন্তু এটি non-blocking
-            await self.pool.execute(query, symbol, side, price, 0.0) 
-        except Exception as e:
-            logger.error(f"Insert Error: {e}")
-
-    async def insert_candle(self, candle_data: dict):
-        """১ মিনিটের ক্যান্ডেল সেভ করা"""
-        query = """
-            INSERT INTO candles_1m (time, symbol, open, high, low, close, volume)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (time, symbol) DO NOTHING;
-        """
-        try:
-            await self.pool.execute(query, 
-                candle_data['time'], candle_data['symbol'], 
-                candle_data['open'], candle_data['high'], 
-                candle_data['low'], candle_data['close'], 
-                candle_data['volume']
+            self.pool = await asyncpg.create_pool(
+                dsn=settings.DATABASE_URL, 
+                min_size=1, 
+                max_size=10, 
+                command_timeout=60
             )
+            await self.init_db()
+            logger.info("✅ Connected to TimescaleDB (Async Pool Ready)")
         except Exception as e:
-            logger.error(f"Candle Insert Error: {e}")
+            logger.error(f"❌ DB Connection Failed: {e}")
 
-    async def fetch_recent_candles(self, symbol: str, limit: int = 100):
-        """ডাটাবেস থেকে লেটেস্ট ক্যান্ডেল ফেচ করা"""
-        if not self.pool: return []
+    async def init_db(self):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS market_candles (
+                    time TIMESTAMPTZ NOT NULL,
+                    symbol TEXT NOT NULL,
+                    open DOUBLE PRECISION,
+                    high DOUBLE PRECISION,
+                    low DOUBLE PRECISION,
+                    close DOUBLE PRECISION,
+                    volume DOUBLE PRECISION,
+                    UNIQUE(time, symbol)
+                );
+            """)
+            try:
+                await conn.execute("""
+                    SELECT create_hypertable('market_candles', 'time', if_not_exists => TRUE);
+                """)
+                logger.info("⚡ Hypertable 'market_candles' configured.")
+            except Exception as e:
+                logger.warning(f"Hypertable creation msg: {e}")
+
+    async def save_candle(self, data):
+        """FIXED: Timezone Handling"""
+        if not self.pool: return
+        
+        query = """
+            INSERT INTO market_candles (time, symbol, open, high, low, close, volume)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (time, symbol) 
+            DO UPDATE SET 
+                open = EXCLUDED.open, 
+                high = EXCLUDED.high, 
+                low = EXCLUDED.low, 
+                close = EXCLUDED.close, 
+                volume = EXCLUDED.volume;
+        """
+        try:
+            # টাইমস্ট্যাম্প প্রসেসিং
+            ts = pd.to_datetime(data['time'])
+            
+            # যদি টাইমজোন না থাকে (Naive), তবে UTC তে সেট করা
+            if ts.tzinfo is None:
+                ts = ts.tz_localize('UTC')
+            else:
+                ts = ts.tz_convert('UTC')
+
+            async with self.pool.acquire() as conn:
+                await conn.execute(query, 
+                    ts, data['s'], 
+                    float(data['open']), float(data['high']), float(data['low']), 
+                    float(data['close']), float(data['volume'])
+                )
+        except Exception as e:
+            logger.error(f"Save Candle Error: {e}")
+
+    async def save_bulk_candles(self, data_list):
+        if not self.pool or not data_list: return
+
+        records = []
+        for d in data_list:
+            ts = pd.to_datetime(d['time'])
+            if ts.tzinfo is None:
+                ts = ts.tz_localize('UTC')
+            else:
+                ts = ts.tz_convert('UTC')
+                
+            records.append((
+                ts, d.get('s', 'BTC/USDT'), d['open'], d['high'], d['low'], d['close'], d['volume']
+            ))
+        
+        try:
+            async with self.pool.acquire() as conn:
+                query = """
+                    INSERT INTO market_candles (time, symbol, open, high, low, close, volume)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (time, symbol) DO NOTHING;
+                """
+                await conn.executemany(query, records)
+                logger.info(f"💾 Bulk Saved {len(data_list)} candles to TimescaleDB")
+        except Exception as e:
+            logger.error(f"Bulk Save Error: {e}")
+
+    async def get_recent_candles(self, symbol, limit=300):
+        if not self.pool: return pd.DataFrame()
+
         query = """
             SELECT time, open, high, low, close, volume 
-            FROM candles_1m 
+            FROM market_candles 
             WHERE symbol = $1 
-            ORDER BY time DESC 
-            LIMIT $2
+            ORDER BY time ASC 
+            LIMIT $2;
         """
         try:
-            rows = await self.pool.fetch(query, symbol, limit)
-            # rows are Record objects, convert to list of dicts
-            return [dict(row) for row in sorted(rows, key=lambda x: x['time'])] 
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, symbol, limit)
+                if not rows: return pd.DataFrame()
+                
+                data = [dict(row) for row in rows]
+                df = pd.DataFrame(data)
+                
+                df['time'] = pd.to_datetime(df['time'])
+                df.set_index('time', inplace=True)
+                df.index.name = 'timestamp'
+                
+                return df
         except Exception as e:
-            logger.error(f"Fetch Candles Error: {e}")
-            return []
+            logger.error(f"Fetch Error: {e}")
+            return pd.DataFrame()
 
-    # --- Settings Methods (Replacing SQLite) ---
-    async def get_strategy(self):
-        if not self.pool: return "conservative"
-        val = await self.pool.fetchval("SELECT value FROM settings WHERE key='strategy'")
-        return val if val else "conservative"
-
-    async def set_strategy(self, strategy: str):
-        if not self.pool: return
-        await self.pool.execute(
-            "INSERT INTO settings (key, value) VALUES ('strategy', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-            strategy
-        )
-
-# Global Instance
 db = Database()

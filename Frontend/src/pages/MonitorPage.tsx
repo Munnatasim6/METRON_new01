@@ -71,7 +71,7 @@ const MonitorPage: React.FC = () => {
   useEffect(() => {
     fetch('http://localhost:8000/api/exchanges')
       .then((res) => res.json())
-      .then((data) => setExchanges(data.exchanges || []))
+      .then((data) => setExchanges(Array.isArray(data) ? data : data.exchanges || []))
       .catch((err) => console.error('Exchange load failed', err));
   }, []);
 
@@ -80,10 +80,10 @@ const MonitorPage: React.FC = () => {
     if (!selectedExchange) return;
     setIsLoadingMarkets(true);
     setMarkets([]); // Clear previous
-    fetch(`http://localhost:8000/api/markets/${selectedExchange}`)
+    fetch(`http://localhost:8000/api/markets?exchange=${selectedExchange}`)
       .then((res) => res.json())
       .then((data) => {
-        setMarkets(data.markets || []);
+        setMarkets(Array.isArray(data) ? data : data.markets || []);
         setIsLoadingMarkets(false);
       })
       .catch((err) => {
@@ -102,11 +102,13 @@ const MonitorPage: React.FC = () => {
 
       if (strategyRes.ok) {
         const sData = await strategyRes.json();
-        setCurrentStrategy(sData.strategy ? sData.strategy.toUpperCase() : "UNKNOWN");
+        // Backend returns "current_mode"
+        setCurrentStrategy(sData.current_mode ? sData.current_mode.toUpperCase() : "UNKNOWN");
       }
       if (arbitrageRes.ok) {
         const aData = await arbitrageRes.json();
-        setArbitrageData(aData.data || []);
+        // Backend returns direct list
+        setArbitrageData(Array.isArray(aData) ? aData : aData.data || []);
       }
     } catch (error) {
       console.error("Initial Dashboard Fetch Error:", error);

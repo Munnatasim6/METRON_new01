@@ -32,9 +32,10 @@ const MainLayout: React.FC = () => {
         ping: Math.floor(Math.random() * 15) + 5,
       });
 
-      // লগ প্যানেলে লাইভ প্রাইস দেখানো (Test এর জন্য)
-      if (Math.random() > 0.9) {
-        addLog('INFO', `BTC Live: $${marketData.price}`);
+      // লগ প্যানেলে লাইভ প্রাইস দেখানো (Safe Access)
+      const price = marketData?.data?.close || marketData?.close || marketData?.price;
+      if (price && Math.random() > 0.9) {
+        addLog('INFO', `BTC Live: $${price}`);
       }
     });
   }, []);
