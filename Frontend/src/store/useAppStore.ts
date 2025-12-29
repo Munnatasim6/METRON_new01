@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { SystemStatus, LogEntry, Position } from '../types';
+import { SystemStatus, LogEntry, Position, MarketData } from '../types';
 import { MockApi } from '../services/api/mockApi';
 import { playSound } from '../services/soundService';
 
 interface AppState {
   status: SystemStatus;
+  marketData: MarketData | null; // Added for Hybrid AI
+  currentStrategy: string;       // Added for Hybrid AI
   metrics: {
     timeOffset: number;
     apiWeight: number;
@@ -19,6 +21,7 @@ interface AppState {
 
   // Actions
   setStatus: (status: SystemStatus) => void;
+  setStrategy: (strategy: string) => void; // Added action
   toggleSystem: (hasApiKey: boolean) => void;
   addLog: (type: LogEntry['type'], message: string) => void;
   setLogFilter: (filter: 'ALL' | 'INFO' | 'TRADE' | 'ERROR') => void;
@@ -39,6 +42,8 @@ export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       status: SystemStatus.STOPPED,
+      marketData: null,
+      currentStrategy: 'Scalping',
       metrics: { timeOffset: 12, apiWeight: 45, ping: 32, buyPressure: 52 },
       positions: [],
       logs: [],
@@ -46,6 +51,7 @@ export const useAppStore = create<AppState>()(
       soundEnabled: true,
 
       setStatus: (status) => set({ status }),
+      setStrategy: (strategy) => set({ currentStrategy: strategy }),
 
       toggleSystem: (hasApiKey) => {
         const { status, addLog, soundEnabled } = get();

@@ -1,36 +1,34 @@
-import React, { useState } from 'react';
+import React from 'react';
 
-const StrategySelector = () => {
-    const [mode, setMode] = useState('Balanced');
-    const [statusMsg, setStatusMsg] = useState('');
+// স্ট্র্যাটেজি লিস্ট: ভবিষ্যতে এখানে আরও স্ট্র্যাটেজি যোগ করা যাবে
+const strategies = [
+    { id: 'Scalping', name: 'Scalping (RSI + BB)' },
+    { id: 'Momentum', name: 'Momentum (MACD + EMA)' },
+    { id: 'Conservative', name: 'Conservative' },
+    { id: 'Balanced', name: 'Balanced' },
+    { id: 'Aggressive', name: 'Aggressive' },
+    // 👇 এই নতুন হাইব্রিড অপশনটি যোগ করা হলো
+    { id: 'Hybrid AI (Ensemble)', name: '🤖 Hybrid AI (Voting + Neural Net)' },
+];
 
-    const handleModeChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const newMode = e.target.value;
-        setMode(newMode);
-        setStatusMsg('Synced ✅');
-        setTimeout(() => setStatusMsg(''), 2000);
-    };
+interface Props {
+    current: string;
+    onChange: (id: string) => void;
+}
 
+const StrategySelector: React.FC<Props> = ({ current, onChange }) => {
     return (
-        <div style={{ background: '#1e222d', padding: '15px', borderRadius: '8px', marginBottom: '15px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h4 style={{ color: '#d1d4dc', margin: 0, fontSize: '14px' }}>🛡️ Strategy Manager</h4>
-                <span style={{ fontSize: '10px', color: '#00e676' }}>{statusMsg}</span>
-            </div>
-            <select
-                value={mode}
-                onChange={handleModeChange}
-                style={{
-                    width: '100%', padding: '8px', borderRadius: '4px',
-                    background: '#2a2e39', color: '#fff', border: 'none', cursor: 'pointer',
-                    outline: 'none'
-                }}
-            >
-                <option value="Conservative">🛡️ Conservative</option>
-                <option value="Balanced">⚖️ Balanced</option>
-                <option value="Aggressive">🚀 Aggressive</option>
-            </select>
-        </div>
+        <select
+            value={current}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full bg-gray-700 text-white p-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
+        >
+            {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                    {s.name}
+                </option>
+            ))}
+        </select>
     );
 };
 

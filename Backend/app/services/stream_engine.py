@@ -89,15 +89,61 @@ class StreamEngine:
         finally:
             await exchange.close()
 
+    async def run_automation_logic(self, candle_data):
+        """
+        মার্কেট ডাটা আসার পর এই ফাংশনটি চলে।
+        এটি এখন AI সিগন্যাল হ্যান্ডেল করতে পারে।
+        """
+        # ডাটাফ্রেমে কনভার্ট (সিম্পলিফাইড)
+        # যেহেতু broadcast এ ডাটা এড হচ্ছে, আমরা data_buffer ব্যবহার করতে পারি
+        if self.data_buffer.empty: return {"trade_signal": "NEUTRAL", "ai_data": None}
+        
+        df = self.data_buffer.copy()
+
+        # ১. স্ট্র্যাটেজি ম্যানেজার থেকে সিগন্যাল আনা
+        # এখন এটি শুধু "BUY" স্ট্রিং না হয়ে একটি Dictionary ও হতে পারে
+        signal_data = await strategy_manager.get_signal(df)
+        
+        trade_signal = "NEUTRAL"
+        ai_meta_data = None
+
+        # ২. সিগন্যালটি কি সাধারণ স্ট্রিং নাকি AI অবজেক্ট? চেক করা হচ্ছে
+        if isinstance(signal_data, dict):
+            # এটি হাইব্রিড ইঞ্জিনের ডাটা
+            trade_signal = signal_data.get('signal', 'NEUTRAL')
+            ai_meta_data = {
+                'vote': signal_data.get('sentiment_score', 0),
+                'confidence': signal_data.get('ai_confidence', 0),
+                'is_ai': True
+            }
+        else:
+            # এটি সাধারণ স্ট্র্যাটেজির ডাটা
+            trade_signal = str(signal_data)
+            ai_meta_data = {'is_ai': False}
+
+        # ৩. ট্রেড এক্সিকিউশন (Executor কে শুধু BUY/SELL স্ট্রিং দেওয়া হবে)
+        if trade_signal in ["BUY", "SELL"]:
+            await trade_executor.execute_trade({
+                "symbol": candle_data.get('s', self.symbol),
+                "side": trade_signal,
+                "price": candle_data.get('close'),
+                "strategy": strategy_manager.current_mode
+            })
+
+        # ৪. ফ্রন্টএন্ডের জন্য ডাটা রিটার্ন (WebSocket এর মাধ্যমে যাবে)
+        return {
+            "trade_signal": trade_signal,
+            "ai_data": ai_meta_data
+        }
+
     async def broadcast(self, raw_candle_data):
         if not self.connected_clients:
             return
 
         try:
             # ============================================================
-            # FIX: Symbol Definition (CRITICAL FIX)
+            # FIX: Symbol Definition
             # ============================================================
-            # সিম্বলটি শুরুতেই ডিফাইন করা হলো যাতে পরে NameError না হয়
             symbol = raw_candle_data.get('s', self.symbol)
 
             # ============================================================
@@ -133,10 +179,8 @@ class StreamEngine:
                 # নতুন মিনিট ডিটেকশন
                 if current_time.minute != last_idx_time.minute:
                     last_completed_candle = self.data_buffer.iloc[-1].to_dict()
-                    
-                    # ডাটাবেসের জন্য টাইমস্ট্যাম্প এবং সিম্বল সেট করা
                     last_completed_candle['time'] = last_idx_time.isoformat()
-                    last_completed_candle['s'] = symbol # FIX: এখন আর ক্র্যাশ করবে না
+                    last_completed_candle['s'] = symbol 
                     
                     # Async Save to TimescaleDB
                     asyncio.create_task(db.save_candle(last_completed_candle))
@@ -153,70 +197,21 @@ class StreamEngine:
             # ============================================================
             # ধাপ-৩: প্রসেসিং এবং অটোমেশন
             # ============================================================
-            df_prepared = self.tf_manager.prepare_and_resample(self.data_buffer.copy(), '1min') 
+            # Analysis Logic call
+            analysis_result = await self.run_automation_logic(processed_data)
             
-            latest_clean_data = {}
-            market_phase = "Unknown"
-
-            if df_prepared is not None and not df_prepared.empty:
-                df_enriched = self.tech_indicators.apply_all_indicators(df_prepared)
-                
-                latest_row = df_enriched.iloc[-1]
-                latest_dict = latest_row.to_dict()
-                latest_dict['time'] = latest_row.name.isoformat()
-                latest_clean_data = {k: (v if pd.notna(v) else None) for k, v in latest_dict.items()}
-                market_phase = latest_clean_data.get('market_phase', 'Consolidation')
-
-                # Automation Check (30s Timer)
-                now = datetime.now()
-                if (now - self.last_analysis_time).total_seconds() >= self.analysis_interval_sec:
-                    # FIX: symbol ভেরিয়েবল এখন লগে ব্যবহার করা যাবে
-                    logger.info(f"⚡ Running Automation Logic for {symbol}...")
-                    await self.run_automation_logic(df_enriched, market_phase, processed_data['close'], symbol)
-                    self.last_analysis_time = now
-
-                # Message Send
-                message = json.dumps({
-                    "type": "market_update",
-                    "data": latest_clean_data,
-                    "phase": market_phase
-                })
-            else:
-                message = json.dumps({"type": "raw_update", "data": raw_candle_data})
+            # Message Send
+            message = json.dumps({
+                "type": "market_update",
+                "price_data": processed_data,
+                "analysis": analysis_result # এর ভেতরেই AI Confidence আছে
+            })
 
             if self.connected_clients:
                 await asyncio.gather(*[client.send_text(message) for client in self.connected_clients])
 
         except Exception as e:
             logger.error(f"StreamEngine Error: {e}", exc_info=True)
-
-    async def run_automation_logic(self, df_enriched, market_phase, current_price, symbol):
-        """আলাদা ফাংশনে অটোমেশন লজিক"""
-        try:
-            signal_result = self.signal_engine.analyze(df_enriched)
-            decision = strategy_manager.get_strategy_decision(signal_result, market_phase)
-
-            if decision.get("should_trade"):
-                active_positions = [p for p in trade_executor.positions if p['symbol'] == symbol and p['status'] == 'OPEN']
-                
-                if not active_positions:
-                    trade_side = "BUY" if signal_result.get('score', 0) > 0 else "SELL"
-                    trade_signal = {
-                        "symbol": symbol,
-                        "side": trade_side,
-                        "price": current_price,
-                        "strategy": decision['strategy']
-                    }
-                    execution_result = await trade_executor.execute_trade(trade_signal)
-                    if execution_result:
-                        await self.send_trade_alert(execution_result)
-        except Exception as e:
-             logger.error(f"Automation Error: {e}")
-
-    async def send_trade_alert(self, trade_data):
-        if not self.connected_clients: return
-        alert_msg = json.dumps({"type": "trade_alert", "data": trade_data})
-        await asyncio.gather(*[client.send_text(alert_msg) for client in self.connected_clients])
 
     async def connect(self, websocket):
         await websocket.accept()

@@ -203,4 +203,7 @@ class TechnicalIndicators:
             logger.error(f"Market Phase Error: {e}")
             df['market_phase'] = 'Consolidation'
         
+        
         return df
+
+technical_indicators = TechnicalIndicators()

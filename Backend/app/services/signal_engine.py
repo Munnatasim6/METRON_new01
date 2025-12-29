@@ -78,3 +78,5 @@ class SignalEngine:
         except Exception as e:
             logger.error(f"Signal Calculation Error: {e}")
             return {"score": 0, "verdict": "ERROR", "signals": []}
+
+signal_engine = SignalEngine()

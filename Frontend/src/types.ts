@@ -30,6 +30,16 @@ export interface MarketData {
   pivot_p?: number;
   fractal_top?: boolean;
   fractal_bottom?: boolean;
+
+  // Analysis Data for AI Widget
+  analysis?: {
+    trade_signal?: string;
+    ai_data?: {
+      vote: number;
+      confidence: number;
+      is_ai: boolean;
+    };
+  };
 }
 
 export interface SignalResponse {

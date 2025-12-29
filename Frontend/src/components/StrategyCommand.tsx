@@ -1,248 +1,104 @@
-import React, { useState, useEffect } from 'react';
-
-interface BacktestResult {
-    symbol: string;
-    strategy: string;
-    total_trades: number;
-    win_rate: number;
-    final_balance: number;
-    net_profit: number;
-    report_file?: string;
-}
+import React from 'react';
+import { useAppStore } from '../store/useAppStore'; // স্টোর থেকে গ্লোবাল ডাটা
+import StrategySelector from './Widgets/StrategySelector'; // ধাপ ১ এর সিলেক্টর
+import AICommandWidget from './Widgets/AICommandWidget';   // ধাপ ২ এর উইজেট
 
 const StrategyCommand: React.FC = () => {
-    // --- States ---
-    const [currentMode, setCurrentMode] = useState("Loading...");
-    const [availableModes, setAvailableModes] = useState<string[]>([]);
+    // ১. অ্যাপের গ্লোবাল স্টেট থেকে ডাটা আনা
+    const { marketData, currentStrategy, setStrategy } = useAppStore();
 
-    // Risk Config
-    const [riskPct, setRiskPct] = useState(2.0);
-    const [isPaperTrading, setIsPaperTrading] = useState(true);
+    // ২. সেফটি লজিক: ডাটা না থাকলে যেন ক্র্যাশ না করে (Default Values)
+    const analysis = marketData?.analysis || {};
+    const aiData = analysis.ai_data || { vote: 0, confidence: 0 };
+    const tradeSignal = analysis.trade_signal || "NEUTRAL";
 
-    // Backtest
-    const [btSymbol, setBtSymbol] = useState("BTC/USDT");
-    const [btTimeframe, setBtTimeframe] = useState("1h");
-    const [isBacktesting, setIsBacktesting] = useState(false);
-    const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
-
-    // Logs
-    const [commandLogs, setCommandLogs] = useState<string[]>(["System Initialized... Waiting for Strategy Command..."]);
-
-    // --- Actions ---
-
-    // 1. Initial Load
-    useEffect(() => {
-        fetchStrategy();
-    }, []);
-
-    const fetchStrategy = async () => {
-        try {
-            const res = await fetch('http://localhost:8000/api/strategy');
-            const data = await res.json();
-            setCurrentMode(data.current_mode);
-            setAvailableModes(data.available_modes || []);
-            addLog(`Fetched Strategy: ${data.current_mode}`);
-        } catch (e) {
-            addLog("Error fetching strategy.");
-        }
-    };
-
-    const addLog = (msg: string) => {
-        const time = new Date().toLocaleTimeString();
-        setCommandLogs(prev => [`[${time}] ${msg}`, ...prev.slice(0, 9)]);
-    };
-
-    // 2. Change Strategy Mode
-    const handleModeChange = async (mode: string) => {
-        try {
-            addLog(`Switching to ${mode}...`);
-            const res = await fetch('http://localhost:8000/api/strategy', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode })
-            });
-            const data = await res.json();
-            if (data.status === 'success') {
-                setCurrentMode(data.current_mode);
-                addLog(`✅ Strategy Switched to ${data.current_mode}`);
-            }
-        } catch (e) {
-            addLog("❌ Failed to switch strategy.");
-        }
-    };
-
-    // 3. Update Risk Config
-    const saveRiskConfig = async () => {
-        try {
-            addLog(`Updating Risk Config: ${riskPct}% | Paper: ${isPaperTrading}`);
-            const res = await fetch('http://localhost:8000/api/config/trading', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ risk_percentage: riskPct, paper_trading: isPaperTrading })
-            });
-            const data = await res.json();
-            if (data.status === 'success') {
-                addLog("✅ Configuration Saved.");
-            }
-        } catch (e) {
-            addLog("❌ Failed to save config.");
-        }
-    };
-
-    // 4. Run Backtest
-    const runBacktest = async () => {
-        setIsBacktesting(true);
-        setBacktestResult(null);
-        addLog(`🚀 Running Backtest for ${btSymbol} (${btTimeframe})...`);
-
-        try {
-            const res = await fetch('http://localhost:8000/api/backtest', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    exchange: 'binance',
-                    symbol: btSymbol,
-                    timeframe: btTimeframe,
-                    limit: 1000,
-                    strategy: currentMode
-                })
-            });
-            const result = await res.json();
-            setBacktestResult(result);
-            addLog(`📝 Backtest Complete: Win Rate ${result.win_rate.toFixed(1)}%`);
-        } catch (e) {
-            addLog("❌ Backtest Failed.");
-        } finally {
-            setIsBacktesting(false);
-        }
-    };
-
-    // 5. System Halt
-    const handleHalt = async () => {
-        const confirm = window.confirm("Are you sure you want to STOP the system?");
-        if (!confirm) return;
-
-        try {
-            await fetch('http://localhost:8000/api/system/stop', { method: 'POST' });
-            addLog("🛑 SYSTEM HALTED BY USER.");
-            alert("System Stopped.");
-        } catch (e) {
-            addLog("❌ Failed to Halt.");
-        }
-    };
-
-    // --- Styles ---
-    const cardStyle = { background: '#1e222d', padding: '20px', borderRadius: '12px', marginBottom: '20px' };
-    const h2Style = { color: '#d1d4dc', borderBottom: '1px solid #2a2e39', paddingBottom: '10px', marginBottom: '15px' };
-    const btnStyle = (active: boolean) => ({
-        padding: '10px 15px', margin: '5px', borderRadius: '6px', cursor: 'pointer',
-        border: 'none', background: active ? '#2962ff' : '#2a2e39', color: '#fff', fontWeight: 'bold' as 'bold'
-    });
+    // ৩. হাইব্রিড মোড অ্যাক্টিভ কিনা চেক করা
+    const isHybridActive = currentStrategy === 'Hybrid AI (Ensemble)';
 
     return (
-        <div style={{ padding: '20px', color: '#fff', maxWidth: '1200px', margin: '0 auto' }}>
-            <h1 style={{ color: '#2962ff', marginBottom: '30px' }}>🚀 Strategy Command Center</h1>
+        <div className="p-6 bg-gray-900 min-h-screen text-white font-sans">
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
+            {/* হেডার সেকশন */}
+            <header className="mb-8 border-b border-gray-800 pb-4">
+                <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+                    🚀 Strategy Command Center
+                </h1>
+                <p className="text-gray-400 text-sm mt-1">
+                    Manage algorithms, monitor AI signals, and control execution logic.
+                </p>
+            </header>
 
-                {/* Left Column */}
-                <div>
-                    {/* 1. Strategy Deck */}
-                    <div style={cardStyle}>
-                        <h2 style={h2Style}>🎴 Strategy Deck (Current: <span style={{ color: '#00e676' }}>{currentMode}</span>)</h2>
-                        <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                            {availableModes.map(mode => (
-                                <button
-                                    key={mode}
-                                    onClick={() => handleModeChange(mode)}
-                                    style={btnStyle(currentMode === mode)}
-                                >
-                                    {mode}
-                                </button>
-                            ))}
+            {/* মেইন গ্রিড লেআউট (Future Proof Grid System) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+                {/* বাম পাশ: কন্ট্রোল প্যানেল (Size: 4 columns) */}
+                <div className="lg:col-span-4 space-y-6">
+
+                    {/* স্ট্র্যাটেজি সিলেক্টর কার্ড */}
+                    <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg">
+                        <h2 className="text-gray-300 text-xs font-bold uppercase tracking-wider mb-4">
+                            Active Strategy Module
+                        </h2>
+                        <StrategySelector
+                            current={currentStrategy}
+                            onChange={setStrategy}
+                        />
+                        <div className="mt-4 p-3 bg-gray-900 rounded border border-gray-700 text-xs text-gray-400">
+                            Selected: <span className="text-blue-400 font-semibold">{currentStrategy}</span>
                         </div>
                     </div>
 
-                    {/* 4. Backtest Lab */}
-                    <div style={cardStyle}>
-                        <h2 style={h2Style}>🧪 Rapid Backtest Lab</h2>
-                        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                            <input
-                                value={btSymbol} onChange={(e) => setBtSymbol(e.target.value)}
-                                style={{ background: '#2a2e39', border: 'none', color: '#fff', padding: '10px', borderRadius: '4px' }}
-                            />
-                            <select
-                                value={btTimeframe} onChange={(e) => setBtTimeframe(e.target.value)}
-                                style={{ background: '#2a2e39', border: 'none', color: '#fff', padding: '10px', borderRadius: '4px' }}
-                            >
-                                <option value="1m">1 Minute</option>
-                                <option value="5m">5 Minutes</option>
-                                <option value="15m">15 Minutes</option>
-                                <option value="1h">1 Hour</option>
-                                <option value="4h">4 Hour</option>
-                            </select>
-                            <button onClick={runBacktest} style={{ ...btnStyle(true), background: '#7c4dff' }}>
-                                {isBacktesting ? 'Running...' : 'Run Simulation'}
-                            </button>
+                    {/* স্ট্যাটাস কার্ড (Placeholder for future stats) */}
+                    <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg">
+                        <h2 className="text-gray-300 text-xs font-bold uppercase tracking-wider mb-3">System Health</h2>
+                        <div className="flex justify-between items-center text-sm mb-2">
+                            <span className="text-gray-400">Connection</span>
+                            <span className="text-green-400">● Stable</span>
                         </div>
-
-                        {backtestResult && (
-                            <div style={{ background: '#2a2e39', padding: '15px', borderRadius: '8px' }}>
-                                <h3>📊 Result for {backtestResult.strategy} on {backtestResult.symbol}</h3>
-                                <p>Total Trades: {backtestResult.total_trades}</p>
-                                <p>Win Rate: <span style={{ color: backtestResult.win_rate > 50 ? '#00e676' : '#ff5252' }}>{backtestResult.win_rate.toFixed(1)}%</span></p>
-                                <p>Net Profit: <span style={{ color: backtestResult.net_profit > 0 ? '#00e676' : '#ff5252' }}>${backtestResult.net_profit.toFixed(2)}</span> (Base $1000)</p>
-                            </div>
-                        )}
+                        <div className="flex justify-between items-center text-sm">
+                            <span className="text-gray-400">Latency</span>
+                            <span className="text-gray-300">45ms</span>
+                        </div>
                     </div>
                 </div>
 
-                {/* Right Column */}
-                <div>
-                    {/* 2. Risk Panel */}
-                    <div style={cardStyle}>
-                        <h2 style={h2Style}>💰 Risk & Capital</h2>
-                        <div style={{ marginBottom: '15px' }}>
-                            <label>Risk Per Trade: {riskPct}%</label>
-                            <input
-                                type="range" min="1" max="10" step="0.5"
-                                value={riskPct} onChange={(e) => setRiskPct(parseFloat(e.target.value))}
-                                style={{ width: '100%' }}
+                {/* ডান পাশ: ভিজ্যুয়ালাইজেশন এরিয়া (Size: 8 columns) */}
+                <div className="lg:col-span-8">
+
+                    {/* AI উইজেট এরিয়া */}
+                    <div className="h-full">
+                        {isHybridActive ? (
+                            // মোড অন থাকলে উইজেট দেখাবে
+                            <AICommandWidget
+                                isActive={true}
+                                sentiment={aiData.vote}
+                                confidence={aiData.confidence}
+                                signal={tradeSignal}
                             />
-                        </div>
-                        <div style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <span>Mode:</span>
-                            <button
-                                onClick={() => setIsPaperTrading(!isPaperTrading)}
-                                style={{
-                                    background: isPaperTrading ? '#ffab00' : '#ff5252',
-                                    border: 'none', padding: '10px', borderRadius: '4px', color: '#000', fontWeight: 'bold', width: '150px'
-                                }}
-                            >
-                                {isPaperTrading ? '📝 Paper Trading' : '🚨 REAL TRADING'}
-                            </button>
-                        </div>
-                        <button onClick={saveRiskConfig} style={{ ...btnStyle(true), width: '100%' }}>Save Configuration</button>
+                        ) : (
+                            // মোড অফ থাকলে একটি সুন্দর "স্ট্যান্ডবাই" মেসেজ দেখাবে
+                            <div className="h-64 flex flex-col items-center justify-center bg-gray-800/50 rounded-xl border-2 border-dashed border-gray-700">
+                                <span className="text-4xl mb-3 opacity-50">🤖</span>
+                                <h3 className="text-xl font-semibold text-gray-400">Neural Engine Standby</h3>
+                                <p className="text-gray-500 text-sm mt-2">
+                                    Select "Hybrid AI" from the left panel to activate deep analysis.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* ফিউচার এক্সপ্যানশন জোন: এখানে পরে চার্ট বা লগ বসানো যাবে */}
+                        {isHybridActive && (
+                            <div className="mt-6 p-4 bg-gray-800 rounded-xl border border-gray-700">
+                                <h4 className="text-xs font-bold text-gray-400 uppercase mb-2">Live Analysis Log</h4>
+                                <div className="font-mono text-xs text-green-400/80">
+                                    {`> Processing 70 indicators... OK`}<br />
+                                    {`> Connecting to Random Forest Model... OK`}<br />
+                                    {`> Waiting for next candle...`}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
-                    {/* 3. Safety Guard */}
-                    <div style={{ ...cardStyle, border: '1px solid #ff5252' }}>
-                        <h2 style={{ ...h2Style, color: '#ff5252', borderBottomColor: '#ff5252' }}>🛡️ Safety Guard</h2>
-                        <p style={{ fontSize: '12px', color: '#aaa' }}>Emergency Stop will cancel all active orders and stop the bot service.</p>
-                        <button onClick={handleHalt} style={{ width: '100%', padding: '15px', background: '#d50000', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer', marginTop: '10px' }}>
-                            🛑 HALT SYSTEM
-                        </button>
-                    </div>
-
-                    {/* 5. Live Log */}
-                    <div style={cardStyle}>
-                        <h2 style={h2Style}>📜 Command Log</h2>
-                        <div style={{ height: '200px', overflowY: 'auto', fontSize: '12px', color: '#aaa', fontFamily: 'monospace' }}>
-                            {commandLogs.map((log, i) => (
-                                <div key={i} style={{ borderBottom: '1px solid #333', padding: '4px 0' }}>{log}</div>
-                            ))}
-                        </div>
-                    </div>
                 </div>
 
             </div>

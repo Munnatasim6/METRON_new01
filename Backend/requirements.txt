@@ -9,3 +9,6 @@ numpy
 asyncpg
 sqlalchemy
 python-dotenv
+# Machine Learning Dependencies
+scikit-learn
+joblib
