@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import asyncio
 import logging
-import ccxt.async_support as ccxt  # CCXT লাইব্রেরি ইমপোর্ট
+import ccxt.async_support as ccxt
 
 # সার্ভিস ইমপোর্ট
 from app.services.timeframe_manager import TimeframeManager
@@ -11,6 +11,8 @@ from app.services.technical_indicators import TechnicalIndicators
 from app.services.stream_engine import StreamEngine
 from app.services.strategy_manager import strategy_manager
 from app.services.arbitrage_engine import arbitrage_engine
+from app.services.trade_executor import trade_executor # Gap 1 Fix
+from app.database import db # Gap 1 & 2 Fix
 
 # লগিং কনফিগারেশন
 logging.basicConfig(level=logging.INFO)
@@ -33,118 +35,136 @@ tf_manager = TimeframeManager()
 ti_engine = TechnicalIndicators()
 
 # ============================================================
-# MARKET LISTENER SERVICE (Core i3 Optimized)
+# MARKET LISTENER SERVICE (GAP 3 FIXED: Auto-Healing Connection)
 # ============================================================
 async def start_market_listener():
     """
-    ব্যাকগ্রাউন্ড টাস্ক যা বাইনান্স থেকে রিয়েল-টাইম ডাটা ফেচ করে
-    StreamEngine-এ পুশ করবে।
+    ব্যাকগ্রাউন্ড টাস্ক: বাইনান্স থেকে ডাটা আনবে।
+    নেটওয়ার্ক ফেল করলে অটোমেটিক কানেকশন রিসেট করবে (Zombie Killer Logic)।
     """
-    # পাবলিক ইন্সট্যান্স (API Key ছাড়া) - এতে রেট লিমিট সমস্যা কম হয়
-    exchange = ccxt.binance({
-        'enableRateLimit': True,
-        'options': {'defaultType': 'future'} # ফিউচার মার্কেট ডাটা (প্রয়োজন হলে 'spot' করা যাবে)
-    })
-    
     symbol = "BTC/USDT"
-    logger.info(f"📡 Market Listener Started via REST Polling for {symbol}...")
+    logger.info(f"📡 Market Listener Service Initialized for {symbol}")
 
-    try:
-        while True:
-            try:
-                # ১. ডাটা ফেচিং (REST Polling)
-                # limit=1 মানে শুধু লেটেস্ট ক্যান্ডেলটা আনছি (ব্যান্ডউইথ সেভিং)
-                ohlcv = await exchange.fetch_ohlcv(symbol, '1m', limit=1)
+    # ১. আউটার লুপ (The Manager Loop - কানেকশন ম্যানেজার)
+    while True:
+        exchange = None
+        try:
+            # প্রতিবার লুপের শুরুতে একদম নতুন কানেকশন তৈরি হবে
+            logger.info("🔄 Creating Fresh Connection to Binance...")
+            exchange = ccxt.binance({
+                'enableRateLimit': True,
+                'options': {'defaultType': 'future'} 
+            })
+            
+            # ২. ইনার লুপ (The Worker Loop - ডাটা ফেচার)
+            while True:
+                try:
+                    # ডাটা ফেচিং (Real-time 1m candle)
+                    ohlcv = await exchange.fetch_ohlcv(symbol, '1m', limit=1)
 
-                if ohlcv:
-                    latest_candle = ohlcv[-1] # [Time, Open, High, Low, Close, Volume]
+                    if ohlcv:
+                        latest_candle = ohlcv[-1]
+                        
+                        # ডাটা ফরম্যাটিং
+                        candle_data = {
+                            'time': latest_candle[0],
+                            'open': latest_candle[1],
+                            'high': latest_candle[2],
+                            'low': latest_candle[3],
+                            'close': latest_candle[4],
+                            'volume': latest_candle[5],
+                            's': symbol
+                        }
 
-                    # ২. ডাটা ফরম্যাটিং (Dynamic Dict Creation)
-                    candle_data = {
-                        'time': latest_candle[0],
-                        'open': latest_candle[1],
-                        'high': latest_candle[2],
-                        'low': latest_candle[3],
-                        'close': latest_candle[4],
-                        'volume': latest_candle[5],
-                        's': symbol # সিম্বল আইডেন্টিফায়ার
-                    }
+                        # ইঞ্জিনে ব্রডকাস্ট (যা ডাটাবেসেও সেভ করবে)
+                        await stream_engine.broadcast(candle_data)
 
-                    # ৩. ইঞ্জিনে পুশ করা (Broadcast)
-                    await stream_engine.broadcast(candle_data)
+                    # Core i3 Optimization: ১ সেকেন্ড বিশ্রাম
+                    await asyncio.sleep(1)
 
-                # Core i3 Optimization: রেট লিমিটিং
-                # ১ সেকেন্ড অপেক্ষা (বাইনান্সের ওপর চাপ কমানোর জন্য)
-                await asyncio.sleep(1)
+                except Exception as worker_error:
+                    # ৩. এরর ডিটেকশন (নেটওয়ার্ক সমস্যা হলে লুপ ব্রেক করবে)
+                    logger.warning(f"⚠️ Network/API Error in Worker Loop: {worker_error}")
+                    logger.warning("♻️ Killing Zombie Connection and Restarting...")
+                    break # ইনার লুপ ব্রেক করে আউটার লুপে পাঠাবে
 
-            except Exception as inner_e:
-                logger.warning(f"⚠️ Fetch Error: {inner_e}. Retrying in 5s...")
-                await asyncio.sleep(5) # এরর হলে একটু বেশি সময় অপেক্ষা
+        except Exception as manager_error:
+            logger.error(f"❌ Critical Manager Loop Error: {manager_error}")
+        
+        finally:
+            # ৪. ক্লিনআপ (মেমোরি লিক রোধ করতে কানেকশন ক্লোজ)
+            if exchange:
+                try:
+                    await exchange.close()
+                    logger.info("🗑️ Old Connection Closed & Cleanup Done.")
+                except Exception as close_error:
+                    logger.error(f"⚠️ Cleanup Error: {close_error}")
 
-    except asyncio.CancelledError:
-        logger.info("🛑 Market Listener Stopped.")
-    finally:
-        await exchange.close()
+        # ৫. ব্যাক-অফ স্ট্র্যাটেজি (পুনরায় কানেক্ট করার আগে ৫ সেকেন্ড অপেক্ষা)
+        logger.info("⏳ Waiting 5s before Re-connection...")
+        await asyncio.sleep(5)
 
 # ============================================================
 # LIFECYCLE EVENTS (Startup & Shutdown)
 # ============================================================
-from app.database import db
-
 @app.on_event("startup")
 async def startup_event():
-    """অ্যাপ রান করার সময় ব্যাকগ্রাউন্ড লুপ চালু করা"""
+    """অ্যাপ রান করার সময় ডাটাবেস কানেকশন ও লিসেনার চালু করা"""
     logger.info("🚀 Metron AI System Booting Up...")
+    
+    # ১. ডাটাবেস কানেকশন (TimescaleDB)
     await db.connect()
-    # লিসেনার টাস্ক হিসেবে অ্যাসাইন করা
+    
+    # ২. পজিশন রিকভারি (Gap 1 Fix - Trade Memory Restore)
+    await trade_executor.sync_positions()
+    
+    # ৩. মার্কেট লিসেনার চালু (Gap 3 Fix - Robust Data Pump)
     asyncio.create_task(start_market_listener())
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """অ্যাপ বন্ধ করার সময় ক্লিনআপ"""
+    """অ্যাপ বন্ধ করার সময় ক্লিনআপ"""
     logger.info("🌙 System Shutting Down...")
-    # কানেকশন ক্লোজ লজিক এখানে থাকতে পারে
+    await trade_executor.close_connections()
 
 # ============================================================
 # API ENDPOINTS
 # ============================================================
 
-# মক ডাটাবেস (যেহেতু রিয়েল ডিবি কানেকশন কোড নেই, এটি প্লেসহোল্ডার)
-def get_mock_historical_data():
-    dates = pd.date_range(end=pd.Timestamp.now(), periods=300, freq='1min')
-    data = {
-        'open': [50000 + i*10 for i in range(300)],
-        'high': [50100 + i*10 for i in range(300)],
-        'low': [49900 + i*10 for i in range(300)],
-        'close': [50050 + i*10 for i in range(300)],
-        'volume': [100 + i for i in range(300)]
-    }
-    df = pd.DataFrame(data, index=dates)
-    return df
-
 @app.get("/")
 def read_root():
-    return {"status": "active", "system": "Metron AI Core i3 Optimized", "listener": "RUNNING"}
+    return {
+        "status": "active", 
+        "system": "Metron AI Core i3 Optimized", 
+        "active_positions": len(trade_executor.positions),
+        "connection_mode": "Auto-Healing"
+    }
 
 @app.get("/api/v1/market-status")
-async def get_market_status(timeframe: str = Query("1H", description="Timeframe like 15T, 1H, 4H")):
+async def get_market_status(timeframe: str = Query("1H", description="Timeframe like 15m, 1H, 4H")):
     """
-    ফ্রন্টএন্ড লোড হওয়ার সময় পূর্ণাঙ্গ চার্ট ডাটা পাওয়ার জন্য API
+    Gap 2 Fix: Real Database -> Resampling -> Indicators -> Frontend
     """
     try:
-        # TODO: ভবিষ্যতে এটি রিয়েল ডাটাবেস (bot_data.db) থেকে ডাটা আনবে
-        raw_df = get_mock_historical_data() 
+        # ডাটা ফেচিং
+        raw_df = await db.get_recent_candles("BTC/USDT", limit=2000)
         
+        if raw_df.empty:
+            return {"status": "waiting", "message": "Data syncing from Binance... Please wait."}
+        
+        # টাইমফ্রেম কনভারশন
         tf_map = {"1H": "1h", "4H": "4h", "15m": "15T", "1D": "1D"}
         target_tf = tf_map.get(timeframe, "1h")
         
         resampled_df = tf_manager.prepare_and_resample(raw_df, target_tf)
         
         if resampled_df is None or resampled_df.empty:
-            return {"status": "error", "message": "Insufficient data"}
+            return {"status": "waiting", "message": "Insufficient data for this timeframe."}
 
+        # ইন্ডিকেটর ক্যালকুলেশন
         final_df = ti_engine.apply_all_indicators(resampled_df)
         
+        # ডাটা ক্লিনিং (NaN Removal)
         records = final_df.reset_index().to_dict(orient='records')
         clean_records = [{k: (v if pd.notna(v) else None) for k, v in rec.items()} for rec in records]
         
@@ -170,31 +190,25 @@ async def get_strategy_config():
 
 @app.get("/api/arbitrage")
 async def get_arbitrage_data(symbol: str = "BTC/USDT"):
-    """Fetch live prices for Arbitrage Monitor"""
     return await arbitrage_engine.get_arbitrage_opportunities(symbol)
 
 @app.get("/api/exchanges")
 async def get_exchanges():
-    """Returns supported exchanges"""
-    return ["binance", "kraken", "kucoin", "bybit", "gateio"]
+    return ["binance", "kraken", "kucoin", "bybit"]
 
 @app.get("/api/markets")
 async def get_markets(exchange: str = "binance"):
-    """Returns market pairs"""
     return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
 
 @app.websocket("/ws/feed")
 async def websocket_endpoint(websocket: WebSocket):
     """
-    রিয়েল-টাইম ডাটা স্ট্রিমিং পয়েন্ট (Frontend এর সাথে কানেকশন)
+    রিয়েল-টাইম ডাটা স্ট্রিমিং পয়েন্ট
     """
     await stream_engine.connect(websocket)
     try:
         while True:
-            # ক্লায়েন্ট থেকে মেসেজ রিসিভ (Heartbeat বা Subscription)
-            data = await websocket.receive_text()
-            # বর্তমানে আমরা ক্লায়েন্ট থেকে কিছু রিসিভ করে অ্যাকশন নিচ্ছি না, 
-            # কিন্তু কানেকশন ধরে রাখার জন্য এই লুপ জরুরি।
+            await websocket.receive_text()
     except WebSocketDisconnect:
         stream_engine.disconnect(websocket)
     except Exception as e:

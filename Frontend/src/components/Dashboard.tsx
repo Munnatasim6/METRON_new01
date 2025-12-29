@@ -13,10 +13,14 @@ interface SentimentData {
     symbol: string;
     signal?: string;
     confidence?: number;
+    // Missing fields added
+    color: string;
+    summary: { buy: number; sell: number; neutral: number };
+    details: { name: string; signal: string }[];
 }
 
 interface Trade {
-    id: string;
+    id: number;
     price: number;
     amount: number;
     side: 'buy' | 'sell';
@@ -50,7 +54,7 @@ const Dashboard = () => {
 
             if (strategyRes.ok) {
                 const sData = await strategyRes.json();
-                setCurrentStrategy(sData.strategy.toUpperCase());
+                setCurrentStrategy(sData.current_mode.toUpperCase());
             }
             if (arbitrageRes.ok) {
                 const aData = await arbitrageRes.json();
